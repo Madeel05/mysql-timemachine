@@ -1,0 +1,11 @@
+# Ignore local SQLite Vault & Database Snapshots (contains local DB rows/credentials)
+/storage/*.sqlite
+/storage/*.sqlite-shm
+/storage/*.sqlite-wal
+/storage/snapshots/
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
