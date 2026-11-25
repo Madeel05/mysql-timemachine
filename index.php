@@ -9,7 +9,8 @@ if (isset($_GET['action'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MySQL TimeMachine — Instant Ctrl+Z for phpMyAdmin & MySQL</title>
+    <title>MySQL TimeMachine — Undo & Recycle Bin for MySQL</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%2310b981%22/><text x=%2250%22 y=%2268%22 font-size=%2260%22 text-anchor=%22middle%22 fill=%22%23020617%22 font-weight=%22bold%22>&#8634;</text></svg>">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -25,7 +26,7 @@ if (isset($_GET['action'])) {
     </script>
     <style>
         body { background-color: #0b1120; color: #e2e8f0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar { width: 7px; height: 7px; }
         ::-webkit-scrollbar-track { background: #0f172a; }
         ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #475569; }
@@ -33,327 +34,384 @@ if (isset($_GET['action'])) {
 </head>
 <body class="min-h-screen flex flex-col">
 
-    <!-- Top Navigation Bar -->
-    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30">
-        <div class="max-w-[1600px] mx-auto px-5 h-16 flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center shadow-lg shadow-emerald-500/20 font-bold text-slate-950 text-lg">
-                    &#8634;
-                </div>
-                <div>
-                    <div class="flex items-center gap-2">
-                        <h1 class="font-bold text-lg tracking-tight text-white">MySQL TimeMachine</h1>
-                        <span class="text-[11px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                            Hybrid Vault v1.0
-                        </span>
+    <!-- CLEAN TOP BAR -->
+    <header class="border-b border-slate-800/90 bg-slate-900/95 backdrop-blur sticky top-0 z-30">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+            <!-- Brand + Database Picker -->
+            <div class="flex items-center gap-4 min-w-0">
+                <div class="flex items-center gap-2.5 shrink-0">
+                    <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 font-black text-slate-950 text-lg">
+                        &#8634;
                     </div>
-                    <p class="text-xs text-slate-400">Instant Ctrl+Z for phpMyAdmin — Undo DELETE, UPDATE, TRUNCATE &amp; DROP TABLE</p>
+                    <div class="hidden sm:block">
+                        <h1 class="font-bold text-base tracking-tight text-white leading-tight">MySQL TimeMachine</h1>
+                        <p class="text-[11px] text-slate-400">Undo &amp; Recycle Bin for phpMyAdmin</p>
+                    </div>
+                </div>
+
+                <div class="h-6 w-px bg-slate-800 hidden sm:block"></div>
+
+                <!-- Database Selector -->
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400 hidden md:inline">Database:</span>
+                    <select id="dbSelect" onchange="onDatabaseChange(this.value)" class="bg-slate-950 border border-slate-700 hover:border-slate-600 rounded-lg px-3 py-1.5 text-sm font-semibold text-white focus:outline-none focus:border-emerald-500 min-w-[160px] max-w-[240px]">
+                        <option value="">Loading...</option>
+                    </select>
                 </div>
             </div>
 
-            <!-- Right Controls -->
-            <div class="flex items-center gap-3">
-                <div id="liveSyncBadge" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
-                    <span id="syncDot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span id="syncStatusText">Auto-watching phpMyAdmin (3s)</span>
+            <!-- Right Actions -->
+            <div class="flex items-center gap-2 shrink-0">
+                <div class="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-300" title="Automatically detects changes made in phpMyAdmin every 3 seconds">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Live Watch</span>
                 </div>
 
-                <button onclick="setupDemoDb()" class="px-3.5 py-2 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-medium transition flex items-center gap-1.5">
-                    <span>&#9889;</span> Create / Reset Demo Lab DB
+                <button onclick="openRewindModal()" class="px-3 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition flex items-center gap-1.5">
+                    <span>&#9194;</span> <span class="hidden sm:inline">Rewind Time</span>
                 </button>
 
-                <a href="http://localhost/phpmyadmin" target="_blank" class="px-3.5 py-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-medium transition flex items-center gap-1.5">
-                    <span>&#8599;</span> Open phpMyAdmin
-                </a>
-
-                <button onclick="openConnectionModal()" class="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition">
-                    <span id="connBtnLabel">127.0.0.1:3306 (root)</span>
+                <button onclick="openSettingsDrawer()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition flex items-center gap-1.5">
+                    <span>&#9881;</span> <span class="hidden sm:inline">Settings</span>
                 </button>
             </div>
         </div>
     </header>
 
-    <!-- Toast Notification Banner -->
+    <!-- Toast Notifications -->
     <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-md"></div>
 
-    <!-- Main Layout -->
-    <div class="flex-1 max-w-[1600px] w-full mx-auto px-5 py-5 grid grid-cols-12 gap-5">
+    <!-- MAIN CONTENT CONTAINER -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-5">
 
-        <!-- Left Sidebar: Databases & Tables -->
-        <aside class="col-span-12 lg:col-span-3 flex flex-col gap-4">
-            <!-- Database Picker Card -->
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl">
-                <div class="flex items-center justify-between mb-2">
-                    <label class="text-xs font-semibold uppercase tracking-wider text-slate-400">1. Select Database</label>
-                    <button onclick="refreshAll()" class="text-xs text-cyan-400 hover:text-cyan-300 transition">Refresh</button>
-                </div>
-                <select id="dbSelect" onchange="onDatabaseChange(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
-                    <option value="">Loading databases...</option>
-                </select>
+        <!-- EMERGENCY ALERT BANNER (Dropped or Truncated Tables) -->
+        <div id="missingTableAlertBanner" class="hidden"></div>
 
-                <div class="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                    <button onclick="protectAllTables()" class="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-semibold text-xs transition shadow-lg shadow-emerald-600/20">
-                        &#128737; Protect All Tables in DB
+        <!-- 3 SIMPLE TABS NAVIGATION -->
+        <div class="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800 pb-3">
+            <nav class="flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                <button onclick="switchMainTab('history')" id="mainTabBtn_history" class="px-4 py-2 rounded-lg text-xs font-bold transition bg-emerald-500 text-slate-950 shadow-sm flex items-center gap-1.5">
+                    <span>&#8634;</span> Undo History
+                    <span id="historyCountPill" class="px-1.5 py-0.5 rounded-full bg-slate-950/20 text-[10px] font-bold">0</span>
+                </button>
+                <button onclick="switchMainTab('tables')" id="mainTabBtn_tables" class="px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white flex items-center gap-1.5">
+                    <span>&#128737;</span> Tables &amp; Data
+                    <span id="tablesCountPill" class="px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px]">0</span>
+                </button>
+                <button onclick="switchMainTab('sql')" id="mainTabBtn_sql" class="px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white flex items-center gap-1.5">
+                    <span>&#9889;</span> Safe SQL
+                </button>
+            </nav>
+
+            <!-- Demo Mode Banner Indicator -->
+            <div id="demoDbIndicator" class="hidden items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-500/15 border border-indigo-500/30 text-xs text-indigo-300">
+                <span>&#129514; <strong>Practice Mode:</strong> You are viewing the safe demo database.</span>
+            </div>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- VIEW 1: UNDO HISTORY (RECYCLE BIN - DEFAULT HOME)         -->
+        <!-- ========================================================= -->
+        <section id="mainPanel_history" class="space-y-5">
+
+            <!-- 3 Simple Health Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Card 1: Protection Status -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between gap-3">
+                    <div>
+                        <div class="text-[11px] uppercase tracking-wider font-semibold text-slate-400">Protection Status</div>
+                        <div id="statProtectedText" class="text-lg font-bold text-white mt-0.5">—</div>
+                        <div id="statProtectedSub" class="text-xs text-slate-400 mt-0.5">Checking tables...</div>
+                    </div>
+                    <button id="quickProtectAllBtn" onclick="protectAllTables()" class="px-3 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition shrink-0 shadow-lg shadow-emerald-500/15">
+                        Protect All
                     </button>
-                    <button onclick="manualSync()" class="py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition" title="Sync now">
+                </div>
+
+                <!-- Card 2: Restorable Changes -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between gap-3">
+                    <div>
+                        <div class="text-[11px] uppercase tracking-wider font-semibold text-slate-400">Undo History</div>
+                        <div id="statEventsText" class="text-lg font-bold text-white mt-0.5">0 Changes</div>
+                        <div class="text-xs text-slate-400 mt-0.5">Auto-cleans after 30 days</div>
+                    </div>
+                    <button onclick="clearHistoryNow()" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-300 text-slate-300 border border-slate-700 text-xs font-semibold transition shrink-0">
+                        Clear History
+                    </button>
+                </div>
+
+                <!-- Card 3: Quick Actions -->
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between gap-3">
+                    <div>
+                        <div class="text-[11px] uppercase tracking-wider font-semibold text-slate-400">phpMyAdmin Sync</div>
+                        <div class="text-lg font-bold text-emerald-400 mt-0.5">Active</div>
+                        <div class="text-xs text-slate-400 mt-0.5">Captures changes even when closed</div>
+                    </div>
+                    <button onclick="manualSync()" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition shrink-0">
                         Sync Now
                     </button>
                 </div>
             </div>
 
-            <!-- Tables Protection List -->
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl flex-1 flex flex-col min-h-[420px]">
-                <div class="flex items-center justify-between mb-3">
-                    <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-400">2. Database Tables</h2>
-                    <span id="tableCountBadge" class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300">0 tables</span>
+            <!-- Onboarding Card (Only shown when 0 tables are protected in current DB) -->
+            <div id="onboardingCard" class="hidden bg-gradient-to-r from-emerald-950/50 via-slate-900 to-cyan-950/40 border border-emerald-500/30 rounded-2xl p-6 flex items-center justify-between flex-wrap gap-4">
+                <div class="space-y-1 max-w-xl">
+                    <h2 class="text-base font-bold text-white">&#128737; Turn on Undo Protection for <code id="onboardingDbName" class="text-emerald-400"></code></h2>
+                    <p class="text-xs text-slate-300 leading-relaxed">
+                        Right now, no tables in this database are protected. Click the button on the right to turn on instant <strong>Ctrl+Z protection</strong> — any accidental <code class="text-rose-300">DELETE</code>, <code class="text-amber-300">UPDATE</code>, <code class="text-purple-300">TRUNCATE</code>, or <code class="text-rose-400">DROP TABLE</code> in phpMyAdmin will be automatically saved here so you can undo it in 1 click.
+                    </p>
+                </div>
+                <button onclick="protectAllTables()" class="px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm shadow-xl shadow-emerald-500/20 transition">
+                    &#128737; Protect This Database Now
+                </button>
+            </div>
+
+            <!-- Search & Filter Pills Bar -->
+            <div class="flex items-center justify-between flex-wrap gap-3">
+                <div class="relative flex-1 min-w-[240px] max-w-md">
+                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">&#128269;</span>
+                    <input id="historySearchInput" oninput="renderTimeline()" type="text" placeholder="Search table, ID, or deleted/changed value..." class="w-full bg-slate-900 border border-slate-800 focus:border-emerald-500 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none">
                 </div>
 
-                <div id="tablesList" class="flex-1 overflow-y-auto space-y-2 pr-1">
-                    <div class="text-xs text-slate-500 py-8 text-center">Select a database above</div>
+                <!-- Event Type Filter Pills -->
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    <button onclick="setEventFilter('ALL')" id="filterPill_ALL" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-white border border-slate-700 transition">All</button>
+                    <button onclick="setEventFilter('DELETE')" id="filterPill_DELETE" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-slate-400 hover:text-white border border-slate-800 transition">&#128465; Deleted</button>
+                    <button onclick="setEventFilter('UPDATE')" id="filterPill_UPDATE" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-slate-400 hover:text-white border border-slate-800 transition">&#9998; Edited</button>
+                    <button onclick="setEventFilter('DDL')" id="filterPill_DDL" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-slate-400 hover:text-white border border-slate-800 transition">&#128165; Dropped / Wiped</button>
                 </div>
             </div>
-        </aside>
 
-        <!-- Center / Right Main Panel -->
-        <main class="col-span-12 lg:col-span-9 flex flex-col gap-4">
+            <!-- Timeline Feed -->
+            <div id="timelineContainer" class="space-y-3">
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-500 text-sm">
+                    Loading undo history...
+                </div>
+            </div>
+        </section>
 
-            <!-- SPRINT 3: Missing / Truncated Table Emergency Alert Banner -->
-            <div id="missingTableAlertBanner" class="hidden"></div>
-
-            <!-- Mode Tabs -->
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-2 flex items-center justify-between flex-wrap gap-2">
-                <div class="flex items-center gap-1 flex-wrap">
-                    <button onclick="switchTab('timeline')" id="tabBtn_timeline" class="px-4 py-2 rounded-lg text-xs font-semibold transition bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                        &#8634; Recovery Timeline (Undo History)
-                    </button>
-                    <button onclick="switchTab('vault')" id="tabBtn_vault" class="px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">
-                        &#128737; Schema &amp; Snapshot Armor
-                    </button>
-                    <button onclick="switchTab('browser')" id="tabBtn_browser" class="px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">
-                        &#128269; Live Table Browser &amp; Simulator
-                    </button>
-                    <button onclick="switchTab('sandbox')" id="tabBtn_sandbox" class="px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">
-                        &#9200; Time-Travel &amp; Safe SQL Console
-                    </button>
-                    <button onclick="switchTab('binlog')" id="tabBtn_binlog" class="px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">
-                        &#128190; MySQL Binary Logs Inspector
+        <!-- ========================================================= -->
+        <!-- VIEW 2: TABLES & DATA (UNIFIED TABLE MANAGER)             -->
+        <!-- ========================================================= -->
+        <section id="mainPanel_tables" class="hidden grid grid-cols-12 gap-5">
+            <!-- Left Pane: Searchable Table List with ON/OFF Switches -->
+            <div class="col-span-12 lg:col-span-4 bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col h-[680px]">
+                <div class="flex items-center justify-between gap-2 mb-3">
+                    <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Tables in <span id="tablesPanelDbName" class="text-white"></span></h2>
+                    <button onclick="protectAllTables()" class="text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 font-semibold transition">
+                        Protect All
                     </button>
                 </div>
 
-                <!-- Filter by Table & Cleanup Controls -->
-                <div class="flex items-center gap-2 pr-2 flex-wrap">
-                    <span class="text-[11px] px-2.5 py-1 rounded-md bg-slate-950 border border-slate-800 text-slate-400">
-                        &#128338; Auto-Clean: <strong class="text-emerald-400">30 Days</strong>
-                    </span>
-                    <button onclick="clearHistoryNow('all')" class="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-medium transition flex items-center gap-1.5" title="Clears all timeline history for this database &amp; compacts SQLite disk space">
-                        <span>&#129529;</span> Clear All History
+                <div class="relative mb-3">
+                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">&#128269;</span>
+                    <input id="tableSearchInput" oninput="renderTablesList()" type="text" placeholder="Search tables..." class="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg pl-8 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none">
+                </div>
+
+                <div id="tablesList" class="flex-1 overflow-y-auto space-y-1.5 pr-1">
+                    <div class="text-xs text-slate-500 py-8 text-center">Loading tables...</div>
+                </div>
+            </div>
+
+            <!-- Right Pane: Selected Table Inspector (3 Sub-Tabs) -->
+            <div class="col-span-12 lg:col-span-8 bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col h-[680px]">
+                <div class="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-slate-800">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 id="selectedTableTitle" class="text-base font-bold text-white">Select a table</h3>
+                            <span id="selectedTableBadge" class="hidden"></span>
+                        </div>
+                        <p id="selectedTableMeta" class="text-xs text-slate-400 mt-0.5">Click any table on the left to inspect its data, backups, and history.</p>
+                    </div>
+
+                    <!-- Sub-tabs -->
+                    <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                        <button onclick="switchTableSubTab('data')" id="subTabBtn_data" class="px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-800 text-white">Live Data</button>
+                        <button onclick="switchTableSubTab('backup')" id="subTabBtn_backup" class="px-3 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-white">Backup &amp; Structure</button>
+                        <button onclick="switchTableSubTab('history')" id="subTabBtn_history" class="px-3 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-white">Table History</button>
+                    </div>
+                </div>
+
+                <!-- Sub-tab 1: Live Data -->
+                <div id="subPanel_data" class="flex-1 flex flex-col overflow-hidden pt-4 space-y-3">
+                    <!-- Practice Simulator Bar (ONLY SHOWN ON timemachine_demo!) -->
+                    <div id="demoSimulatorBar" class="hidden p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/30 flex items-center justify-between flex-wrap gap-2">
+                        <span class="text-xs text-indigo-200 font-medium">&#129514; <strong>Practice Lab:</strong> Test an accidental mistake on this demo table:</span>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button onclick="simulateMistake('update_all')" class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-semibold">Edit All Rows</button>
+                            <button onclick="simulateMistake('delete_all')" class="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold">Delete All Rows</button>
+                            <button onclick="simulateMistake('drop_table')" class="px-2.5 py-1 rounded-lg bg-red-600/25 hover:bg-red-600/35 text-red-300 border border-red-500/40 text-xs font-semibold">Drop Table</button>
+                        </div>
+                    </div>
+
+                    <div id="browserRowsContainer" class="flex-1 overflow-auto border border-slate-800 rounded-xl bg-slate-950">
+                        <div class="p-10 text-center text-xs text-slate-500">Select a table on the left to view its live rows.</div>
+                    </div>
+                </div>
+
+                <!-- Sub-tab 2: Backup & Structure -->
+                <div id="subPanel_backup" class="hidden flex-1 overflow-y-auto pt-4 space-y-4">
+                    <div id="tableBackupDetails" class="space-y-4">
+                        <div class="p-10 text-center text-xs text-slate-500">Select a table on the left to view its backup snapshot and CREATE TABLE structure.</div>
+                    </div>
+                </div>
+
+                <!-- Sub-tab 3: Table-Specific History -->
+                <div id="subPanel_history" class="hidden flex-1 overflow-y-auto pt-4 space-y-3">
+                    <div id="tableSpecificHistory" class="space-y-3"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================================= -->
+        <!-- VIEW 3: SAFE SQL (2-STEP PREVIEW -> RUN)                  -->
+        <!-- ========================================================= -->
+        <section id="mainPanel_sql" class="hidden space-y-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                        <h2 class="text-base font-bold text-white">&#9889; Safe SQL Runner</h2>
+                        <p class="text-xs text-slate-400 mt-0.5">Preview exactly which rows an <code class="text-amber-300">UPDATE</code> or <code class="text-rose-300">DELETE</code> query will change <strong>before</strong> running it for real.</p>
+                    </div>
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="text-xs text-slate-400">Examples:</span>
+                        <button onclick="fillSampleSql('update_one')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-cyan-300">Safe Edit</button>
+                        <button onclick="fillSampleSql('update_no_where')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-amber-300">Risky Edit (No WHERE)</button>
+                        <button onclick="fillSampleSql('delete_where')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-rose-300">Delete Query</button>
+                    </div>
+                </div>
+
+                <textarea id="sandboxSqlInput" rows="5" class="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded-xl p-4 font-mono text-sm text-emerald-300 focus:outline-none" placeholder="Write your SQL query here (e.g., UPDATE students SET fee_paid = 20000 WHERE id = 1;)"></textarea>
+
+                <div class="flex items-center gap-3 flex-wrap">
+                    <button onclick="runSandboxSql(true)" class="px-5 py-2.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition flex items-center gap-2">
+                        <span>1.</span> Preview Impact (Safe — Does Not Modify DB)
                     </button>
-                    <span class="text-xs text-slate-400 ml-1">Filter Table:</span>
-                    <select id="timelineTableFilter" onchange="renderTimeline()" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
-                        <option value="">All Tables</option>
+                    <button onclick="runSandboxSql(false)" class="px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-emerald-500/20">
+                        <span>2.</span> Run Query For Real
+                    </button>
+                </div>
+
+                <div id="sandboxResultBox" class="hidden p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-3"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ========================================================= -->
+    <!-- MODAL: REWIND TIME (POINT-IN-TIME RESTORE)                -->
+    <!-- ========================================================= -->
+    <div id="rewindModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-6 space-y-5 shadow-2xl">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-base font-bold text-white">&#9194; Rewind Time (Point-in-Time Restore)</h3>
+                    <p class="text-xs text-slate-400 mt-0.5">Undo every change made after a chosen time in reverse order.</p>
+                </div>
+                <button onclick="closeRewindModal()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">&times;</button>
+            </div>
+
+            <!-- Quick Presets -->
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-xs text-slate-400">Jump back:</span>
+                <button onclick="setPitrMinutesAgo(2)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs font-medium">2 mins ago</button>
+                <button onclick="setPitrMinutesAgo(10)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs font-medium">10 mins ago</button>
+                <button onclick="setPitrMinutesAgo(30)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs font-medium">30 mins ago</button>
+                <button onclick="setPitrMinutesAgo(60)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs font-medium">1 hour ago</button>
+                <button onclick="setPitrMinutesAgo(1440)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs font-medium">24 hours ago</button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Which Table?</label>
+                    <select id="pitrTableSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+                        <option value="">All Tables in Database</option>
                     </select>
                 </div>
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Restore To Timestamp (YYYY-MM-DD HH:MM:SS)</label>
+                    <input id="pitrTimestampInput" type="text" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-emerald-300 focus:outline-none focus:border-indigo-500" placeholder="2026-11-25 15:00:00">
+                </div>
             </div>
 
-            <!-- TAB 1: RECOVERY TIMELINE -->
-            <section id="tabPanel_timeline" class="flex-1 flex flex-col gap-4">
-                <!-- How It Works Quick Banner -->
-                <div class="bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950/30 border border-slate-800 rounded-xl p-4 flex items-center justify-between gap-4">
-                    <div class="text-xs text-slate-300 space-y-1">
-                        <div class="font-semibold text-white text-sm">How to test right now with phpMyAdmin:</div>
-                        <p class="text-slate-400">
-                            1. Click <span class="text-emerald-400 font-medium">"Protect All Tables in DB"</span> on the left (or click <span class="text-indigo-400 font-medium">"Create / Reset Demo Lab DB"</span> in the top bar).
-                            2. Go to <strong>phpMyAdmin</strong> and run <code class="px-1.5 py-0.5 rounded bg-slate-800 text-rose-300">DELETE</code>, <code class="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300">UPDATE</code>, <code class="px-1.5 py-0.5 rounded bg-slate-800 text-purple-300">TRUNCATE</code>, or even <code class="px-1.5 py-0.5 rounded bg-slate-800 text-rose-400">DROP TABLE</code>!
-                            3. Watch it appear below automatically and click <strong>"1-Click Undo / Restore"</strong> to bring everything back!
-                        </p>
-                    </div>
-                </div>
+            <div id="pitrResultBox" class="hidden p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-2 max-h-60 overflow-y-auto"></div>
 
-                <div id="timelineContainer" class="space-y-3">
-                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-12 text-center text-slate-500 text-sm">
-                        Loading recovery timeline...
-                    </div>
-                </div>
-            </section>
-
-            <!-- TAB 1.5: SCHEMA & SNAPSHOT ARMOR (SPRINT 3) -->
-            <section id="tabPanel_vault" class="hidden flex-1 flex flex-col gap-4">
-                <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-                    <div class="flex items-center justify-between flex-wrap gap-3">
-                        <div>
-                            <h3 class="text-sm font-bold text-white">&#128737; Schema Registry &amp; Compressed Micro-Snapshots (<code class="text-emerald-400">CHECKSUM TABLE</code>)</h3>
-                            <p class="text-xs text-slate-400 mt-0.5">
-                                Automatically backs up <code class="text-cyan-300">SHOW CREATE TABLE</code> structures and stores compressed <code class="text-emerald-300">.json.gz</code> row snapshots only when a table's MySQL checksum changes.
-                            </p>
-                        </div>
-                        <button onclick="loadSchemaRegistry()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 border border-slate-700">
-                            Refresh Vault
-                        </button>
-                    </div>
-                    <div id="vaultRegistryContainer" class="space-y-3">
-                        <div class="p-8 text-center text-xs text-slate-500">Loading Schema Registry...</div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- TAB 2: LIVE TABLE BROWSER & SIMULATOR -->
-            <section id="tabPanel_browser" class="hidden flex-1 flex flex-col gap-4">
-                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                    <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
-                        <div class="flex items-center gap-3">
-                            <h3 class="text-sm font-bold text-white">Live Table Data: <span id="browserTableName" class="text-emerald-400">—</span></h3>
-                            <button onclick="loadBrowserTable(currentBrowserTable)" class="text-xs px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">Reload Rows</button>
-                        </div>
-
-                        <!-- Instant Disaster Simulator Buttons (Great for testing!) -->
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <span class="text-xs text-slate-400">Simulate phpMyAdmin Mistake:</span>
-                            <button onclick="simulateMistake('update_all')" class="px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-medium transition">
-                                &#9888; Accidental UPDATE (No WHERE)
-                            </button>
-                            <button onclick="simulateMistake('delete_all')" class="px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-medium transition">
-                                &#128465; Accidental DELETE ALL Rows
-                            </button>
-                            <button onclick="simulateMistake('drop_table')" class="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/40 text-xs font-semibold transition">
-                                &#128165; Accidental DROP TABLE
-                            </button>
-                        </div>
-                    </div>
-
-                    <div id="browserRowsContainer" class="overflow-x-auto border border-slate-800 rounded-lg">
-                        <div class="p-8 text-center text-xs text-slate-500">Click any table on the left sidebar to inspect its live rows.</div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- TAB 3: TIME-TRAVEL (POINT-IN-TIME RESTORE) & SAFE SQL DRY-RUN CONSOLE -->
-            <section id="tabPanel_sandbox" class="hidden flex-1 flex flex-col gap-5">
-
-                <!-- PART A: Point-in-Time Restore ("Time-Travel Machine") -->
-                <div class="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/30 border border-indigo-500/30 rounded-xl p-5 space-y-4 shadow-xl">
-                    <div class="flex items-center justify-between flex-wrap gap-2">
-                        <div>
-                            <div class="flex items-center gap-2">
-                                <h3 class="text-sm font-bold text-white">&#9200; Point-in-Time Restore ("Time-Travel Machine")</h3>
-                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">Sprint 4</span>
-                            </div>
-                            <p class="text-xs text-slate-400 mt-0.5">
-                                Pick any timestamp (e.g., <em>"Restore table to how it looked 10 minutes ago"</em>) and roll back all changes made after that moment in reverse chronological order.
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- Quick Time-Travel Presets -->
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-xs text-slate-400 font-medium">Quick Rewind:</span>
-                        <button onclick="setPitrMinutesAgo(2)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs transition">&#9194; 2 Mins Ago</button>
-                        <button onclick="setPitrMinutesAgo(10)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs transition">&#9194; 10 Mins Ago</button>
-                        <button onclick="setPitrMinutesAgo(30)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs transition">&#9194; 30 Mins Ago</button>
-                        <button onclick="setPitrMinutesAgo(60)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs transition">&#9194; 1 Hour Ago</button>
-                        <button onclick="setPitrMinutesAgo(1440)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-indigo-600/30 text-indigo-300 border border-slate-700 text-xs transition">&#9194; 24 Hours Ago</button>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                        <div class="md:col-span-4">
-                            <label class="block text-xs text-slate-400 mb-1">Target Table (or Entire DB)</label>
-                            <select id="pitrTableSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
-                                <option value="">All Tables in Database</option>
-                            </select>
-                        </div>
-                        <div class="md:col-span-4">
-                            <label class="block text-xs text-slate-400 mb-1">Restore State As Of Timestamp (YYYY-MM-DD HH:MM:SS)</label>
-                            <input id="pitrTimestampInput" type="text" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-emerald-300 focus:outline-none focus:border-indigo-500" placeholder="2026-11-11 13:00:00">
-                        </div>
-                        <div class="md:col-span-4 flex items-center gap-2">
-                            <button onclick="runPitr(true)" class="flex-1 py-2 px-3 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 text-xs font-semibold transition">
-                                &#128269; Preview Rollback
-                            </button>
-                            <button onclick="runPitr(false)" class="flex-1 py-2 px-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-lg shadow-emerald-500/20 transition">
-                                &#9889; Execute Restore
-                            </button>
-                        </div>
-                    </div>
-
-                    <div id="pitrResultBox" class="hidden p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-2"></div>
-                </div>
-
-                <!-- PART B: Safe SQL Runner (phpMyAdmin Alternative with Row-by-Row Diff Preview) -->
-                <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 shadow-xl">
-                    <div class="flex items-center justify-between flex-wrap gap-2">
-                        <div>
-                            <h3 class="text-sm font-bold text-white">&#129514; Safe SQL Runner (phpMyAdmin Alternative with Live Row Diff Preview)</h3>
-                            <p class="text-xs text-slate-400 mt-0.5">
-                                Run <code class="text-amber-300">UPDATE</code> or <code class="text-rose-300">DELETE</code> queries inside a rolled-back transaction that previews the <strong>exact before &amp; after values of every affected row</strong> before committing!
-                            </p>
-                        </div>
-                        <div class="flex items-center gap-1.5 flex-wrap">
-                            <span class="text-[11px] text-slate-400">Load Example:</span>
-                            <button onclick="fillSampleSql('update_one')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-cyan-300">Safe UPDATE</button>
-                            <button onclick="fillSampleSql('update_no_where')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-amber-300">Risky UPDATE (No WHERE)</button>
-                            <button onclick="fillSampleSql('delete_where')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-rose-300">DELETE Query</button>
-                        </div>
-                    </div>
-
-                    <textarea id="sandboxSqlInput" rows="4" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 font-mono text-xs text-emerald-300 focus:outline-none focus:border-emerald-500" placeholder="Example: UPDATE students SET fee_paid = 99999 WHERE roll_no = 'LMS-101';"></textarea>
-
-                    <div class="flex items-center gap-3 flex-wrap">
-                        <button onclick="runSandboxSql(true)" class="px-4 py-2.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition flex items-center gap-1.5">
-                            <span>&#129514;</span> 1. Dry-Run &amp; Preview Exact Row Changes (Rolls Back Safely)
-                        </button>
-                        <button onclick="runSandboxSql(false)" class="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-emerald-600/20">
-                            <span>&#9654;</span> 2. Commit &amp; Execute For Real (Protected by TimeMachine)
-                        </button>
-                    </div>
-
-                    <div id="sandboxResultBox" class="hidden p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-3"></div>
-                </div>
-            </section>
-
-            <!-- TAB 4: MYSQL BINLOG INSPECTOR -->
-            <section id="tabPanel_binlog" class="hidden flex-1 flex flex-col gap-4">
-                <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <h3 class="text-sm font-bold text-white">MySQL Native Binary Log (<code class="text-cyan-400">binlog</code>) Inspector</h3>
-                            <p class="text-xs text-slate-400 mt-0.5">Inspects server-level <code class="text-slate-300">SHOW BINARY LOGS</code> and <code class="text-slate-300">SHOW BINLOG EVENTS</code> alongside our Hybrid Trigger + Checksum Vault.</p>
-                        </div>
-                        <button onclick="loadBinlogStatus()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200">Refresh Binlogs</button>
-                    </div>
-                    <div id="binlogContent" class="text-xs text-slate-300 space-y-3">Loading binary log status...</div>
-                </div>
-            </section>
-
-        </main>
+            <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button onclick="runPitr(true)" class="px-4 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold">
+                    1. Preview Changes
+                </button>
+                <button onclick="runPitr(false)" class="px-5 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shadow-lg shadow-emerald-500/20">
+                    2. Rewind Now
+                </button>
+            </div>
+        </div>
     </div>
 
-    <!-- Connection Settings Modal -->
-    <div id="connModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
-        <div class="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
-            <div class="flex items-center justify-between">
-                <h3 class="font-bold text-white text-base">MySQL Server Connection</h3>
-                <button onclick="closeConnectionModal()" class="text-slate-400 hover:text-white">&times;</button>
+    <!-- ========================================================= -->
+    <!-- SLIDE-OVER DRAWER: SETTINGS & ADVANCED TOOLS              -->
+    <!-- ========================================================= -->
+    <div id="settingsDrawer" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden justify-end">
+        <div class="bg-slate-900 border-l border-slate-800 w-full max-w-md h-full overflow-y-auto p-6 space-y-6 shadow-2xl">
+            <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+                <div>
+                    <h3 class="text-base font-bold text-white">&#9881; Settings &amp; Advanced</h3>
+                    <p class="text-xs text-slate-400">Server connection, practice lab, and MySQL binlogs.</p>
+                </div>
+                <button onclick="closeSettingsDrawer()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">&times;</button>
             </div>
-            <div class="space-y-3 text-xs">
-                <div>
-                    <label class="block text-slate-400 mb-1">Host</label>
-                    <input id="connHost" type="text" value="127.0.0.1" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
-                </div>
-                <div>
-                    <label class="block text-slate-400 mb-1">Port</label>
-                    <input id="connPort" type="number" value="3306" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
-                </div>
-                <div>
-                    <label class="block text-slate-400 mb-1">Username</label>
-                    <input id="connUser" type="text" value="root" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
-                </div>
-                <div>
-                    <label class="block text-slate-400 mb-1">Password</label>
-                    <input id="connPass" type="password" value="" placeholder="(Empty for default Laragon)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
+
+            <!-- Section 1: Practice Lab & phpMyAdmin -->
+            <div class="space-y-2.5">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">Quick Tools</h4>
+                <div class="grid grid-cols-2 gap-2.5">
+                    <button onclick="setupDemoDb(); closeSettingsDrawer();" class="p-3 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold text-left space-y-1 transition">
+                        <div>&#129514; Practice Demo DB</div>
+                        <div class="text-[11px] text-indigo-300/70 font-normal">Safe sample tables to test undo</div>
+                    </button>
+                    <a href="http://localhost/phpmyadmin" target="_blank" class="p-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold text-left space-y-1 transition">
+                        <div>&#8599; Open phpMyAdmin</div>
+                        <div class="text-[11px] text-amber-300/70 font-normal">Open in a new tab</div>
+                    </a>
                 </div>
             </div>
-            <div class="flex justify-end gap-2 pt-2">
-                <button onclick="closeConnectionModal()" class="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 text-xs">Cancel</button>
-                <button onclick="saveConnection()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-semibold text-xs">Connect &amp; Save</button>
+
+            <!-- Section 2: MySQL Connection -->
+            <div class="space-y-3 pt-4 border-t border-slate-800">
+                <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">MySQL Server Connection</h4>
+                <div class="grid grid-cols-3 gap-2 text-xs">
+                    <div class="col-span-2">
+                        <label class="block text-slate-400 mb-1">Host</label>
+                        <input id="connHost" type="text" value="127.0.0.1" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1">Port</label>
+                        <input id="connPort" type="number" value="3306" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                        <label class="block text-slate-400 mb-1">Username</label>
+                        <input id="connUser" type="text" value="root" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1">Password</label>
+                        <input id="connPass" type="password" value="" placeholder="(Empty for Laragon)" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                    </div>
+                </div>
+                <button onclick="saveConnection()" class="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition">
+                    Save &amp; Connect
+                </button>
+            </div>
+
+            <!-- Section 3: Advanced Binary Logs Inspector -->
+            <div class="space-y-3 pt-4 border-t border-slate-800">
+                <div class="flex items-center justify-between">
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400">Advanced: MySQL Binary Logs</h4>
+                    <button onclick="loadBinlogStatus()" class="text-xs text-cyan-400 hover:text-cyan-300">Load / Refresh</button>
+                </div>
+                <div id="binlogContent" class="text-xs text-slate-400 bg-slate-950 border border-slate-800 rounded-xl p-3">
+                    Click "Load / Refresh" to inspect raw MySQL server binary logs.
+                </div>
             </div>
         </div>
     </div>
@@ -362,8 +420,11 @@ if (isset($_GET['action'])) {
         let currentDb = '';
         let currentTables = [];
         let currentTimeline = [];
-        let currentBrowserTable = '';
-        let activeTab = 'timeline';
+        let selectedTableName = '';
+        let activeMainTab = 'history';
+        let activeTableSubTab = 'data';
+        let activeEventFilter = 'ALL';
+        let lastRenderSignature = '';
 
         async function apiCall(action, payload = null) {
             const opts = payload
@@ -371,9 +432,7 @@ if (isset($_GET['action'])) {
                 : { method: 'GET' };
             const res = await fetch(`api.php?action=${encodeURIComponent(action)}`, opts);
             const data = await res.json();
-            if (!data.ok) {
-                throw new Error(data.error || 'Unknown error');
-            }
+            if (!data.ok) throw new Error(data.error || 'Unknown error');
             return data;
         }
 
@@ -383,10 +442,10 @@ if (isset($_GET['action'])) {
             const colors = type === 'error'
                 ? 'bg-rose-950/95 border-rose-500/50 text-rose-200'
                 : 'bg-emerald-950/95 border-emerald-500/50 text-emerald-200';
-            el.className = `px-4 py-3 rounded-xl border shadow-2xl text-xs font-medium flex items-center justify-between gap-3 transition-all ${colors}`;
+            el.className = `px-4 py-3 rounded-xl border shadow-2xl text-xs font-medium flex items-center justify-between gap-3 ${colors}`;
             el.innerHTML = `<span>${escapeHtml(msg)}</span><button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-white">&times;</button>`;
             container.appendChild(el);
-            setTimeout(() => { if (el.parentElement) el.remove(); }, 5000);
+            setTimeout(() => { if (el.parentElement) el.remove(); }, 4500);
         }
 
         function escapeHtml(str) {
@@ -398,58 +457,68 @@ if (isset($_GET['action'])) {
                 .replace(/"/g, '&quot;');
         }
 
+        function timeAgo(sqlDatetime) {
+            if (!sqlDatetime) return '';
+            const clean = sqlDatetime.substring(0, 19).replace(' ', 'T');
+            const diffSec = Math.floor((Date.now() - new Date(clean).getTime()) / 1000);
+            if (isNaN(diffSec) || diffSec < 5) return 'just now';
+            if (diffSec < 60) return `${diffSec}s ago`;
+            if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+            if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+            return `${Math.floor(diffSec / 86400)}d ago`;
+        }
+
         async function initApp() {
             try {
                 const data = await apiCall('status');
                 const conn = data.connection;
-                document.getElementById('connBtnLabel').textContent = `${conn.host}:${conn.port} (${conn.username})`;
                 document.getElementById('connHost').value = conn.host;
                 document.getElementById('connPort').value = conn.port;
                 document.getElementById('connUser').value = conn.username;
-
                 populateDatabaseSelect(data.databases);
             } catch (err) {
                 showToast('MySQL Connection Error: ' + err.message, 'error');
             }
 
-            // Poll every 3 seconds so changes made in phpMyAdmin appear live without refreshing!
+            // Quiet auto-sync every 3 seconds (only re-renders DOM if data actually changed!)
             setInterval(async () => {
                 if (!currentDb) return;
                 try {
                     const syncData = await apiCall('sync', { db: currentDb });
+                    const newTables = syncData.tables || [];
+                    const newTimeline = syncData.timeline || [];
+                    const sig = JSON.stringify({ t: newTables, l: newTimeline });
+
                     if (syncData.sync && syncData.sync.new_events_synced > 0) {
-                        showToast(`Detected ${syncData.sync.new_events_synced} new database change(s)! Ready to undo.`);
+                        showToast(`Captured ${syncData.sync.new_events_synced} new change(s) from phpMyAdmin!`);
                     }
-                    currentTables = syncData.tables || [];
-                    currentTimeline = syncData.timeline || [];
-                    renderTablesList();
-                    renderTimeline();
-                } catch (e) {
-                    // quiet background poll
-                }
+                    if (sig !== lastRenderSignature) {
+                        lastRenderSignature = sig;
+                        currentTables = newTables;
+                        currentTimeline = newTimeline;
+                        updateDashboardUI();
+                    }
+                } catch (e) {}
             }, 3000);
         }
 
         function populateDatabaseSelect(databases, preferredDb = null) {
             const sel = document.getElementById('dbSelect');
             if (!databases || databases.length === 0) {
-                sel.innerHTML = `<option value="">No databases found</option>`;
+                sel.innerHTML = `<option value="">No databases</option>`;
                 return;
             }
-
             sel.innerHTML = databases.map(d => {
-                const badge = d.dropped_tables > 0
-                    ? ` [${d.dropped_tables} DROPPED!]`
-                    : (d.protected_tables > 0 ? ` (${d.protected_tables} protected)` : '');
-                return `<option value="${escapeHtml(d.name)}">${escapeHtml(d.name)}${badge}</option>`;
+                const note = d.dropped_tables > 0 ? ` (${d.dropped_tables} DROPPED!)` : '';
+                return `<option value="${escapeHtml(d.name)}">${escapeHtml(d.name)}${note}</option>`;
             }).join('');
 
             if (preferredDb && databases.some(d => d.name === preferredDb)) {
                 currentDb = preferredDb;
             } else if (!currentDb || !databases.some(d => d.name === currentDb)) {
-                const demo = databases.find(d => d.name === 'timemachine_demo');
                 const lot = databases.find(d => d.name === 'lot');
-                currentDb = demo ? demo.name : (lot ? lot.name : databases[0].name);
+                const demo = databases.find(d => d.name === 'timemachine_demo');
+                currentDb = lot ? lot.name : (demo ? demo.name : databases[0].name);
             }
 
             sel.value = currentDb;
@@ -459,115 +528,99 @@ if (isset($_GET['action'])) {
         async function onDatabaseChange(dbName) {
             if (!dbName) return;
             currentDb = dbName;
+            selectedTableName = '';
+
+            // Show/hide Practice Demo indicators
+            const isDemo = currentDb === 'timemachine_demo';
+            document.getElementById('demoDbIndicator').classList.toggle('hidden', !isDemo);
+            document.getElementById('demoDbIndicator').classList.toggle('flex', isDemo);
+            document.getElementById('demoSimulatorBar').classList.toggle('hidden', !isDemo);
+            document.getElementById('demoSimulatorBar').classList.toggle('flex', isDemo);
+            document.getElementById('tablesPanelDbName').textContent = currentDb;
+
             try {
                 const data = await apiCall('overview', { db: dbName });
                 currentTables = data.tables || [];
                 currentTimeline = data.timeline || [];
-                updateTableFilterDropdown();
-                renderTablesList();
-                renderTimeline();
-                if (currentTables.length > 0 && (!currentBrowserTable || !currentTables.some(t => t.table_name === currentBrowserTable))) {
-                    const firstLive = currentTables.find(t => !t.is_dropped);
-                    if (firstLive) {
-                        currentBrowserTable = firstLive.table_name;
-                        if (activeTab === 'browser') loadBrowserTable(currentBrowserTable);
-                    }
+                lastRenderSignature = JSON.stringify({ t: currentTables, l: currentTimeline });
+                updatePitrTableDropdown();
+                updateDashboardUI();
+
+                if (currentTables.length > 0) {
+                    const first = currentTables.find(t => !t.is_dropped) || currentTables[0];
+                    selectTable(first.table_name, false);
                 }
             } catch (err) {
                 showToast(err.message, 'error');
             }
         }
 
-        function updateTableFilterDropdown() {
-            const filterSel = document.getElementById('timelineTableFilter');
-            const prev = filterSel.value;
-            const opts = currentTables.map(t => `<option value="${escapeHtml(t.table_name)}">${escapeHtml(t.table_name)}</option>`).join('');
-            filterSel.innerHTML = `<option value="">All Tables (${currentTables.length})</option>` + opts;
-            filterSel.value = prev;
+        function updateDashboardUI() {
+            // Update Top Health Cards & Pills
+            const total = currentTables.length;
+            const protectedCount = currentTables.filter(t => t.is_protected).length;
+            const unrestoredCount = currentTimeline.filter(b => !b.restored_at).length;
 
-            const pitrSel = document.getElementById('pitrTableSelect');
-            if (pitrSel) {
-                const prevPitr = pitrSel.value;
-                pitrSel.innerHTML = `<option value="">All Tables in '${escapeHtml(currentDb)}'</option>` + opts;
-                pitrSel.value = prevPitr;
+            document.getElementById('historyCountPill').textContent = currentTimeline.length;
+            document.getElementById('tablesCountPill').textContent = total;
+            document.getElementById('statProtectedText').textContent = `${protectedCount} / ${total} Protected`;
+            document.getElementById('statProtectedSub').textContent = protectedCount === total && total > 0
+                ? 'Every table is protected'
+                : (protectedCount === 0 ? 'Turn on protection to enable Undo' : `${total - protectedCount} table(s) unprotected`);
+
+            document.getElementById('statEventsText').textContent = `${currentTimeline.length} Change${currentTimeline.length === 1 ? '' : 's'} (${unrestoredCount} active)`;
+
+            // Show onboarding card if 0 tables protected
+            const onboarding = document.getElementById('onboardingCard');
+            document.getElementById('onboardingDbName').textContent = currentDb;
+            onboarding.classList.toggle('hidden', protectedCount > 0 || total === 0);
+
+            renderMissingTablesAlert();
+            renderTimeline();
+            renderTablesList();
+            if (activeMainTab === 'tables' && selectedTableName && activeTableSubTab === 'history') {
+                renderSelectedTableHistory();
             }
         }
 
-        function renderTablesList() {
-            const container = document.getElementById('tablesList');
-            document.getElementById('tableCountBadge').textContent = `${currentTables.length} tables`;
-            renderMissingTablesAlert();
+        function updatePitrTableDropdown() {
+            const sel = document.getElementById('pitrTableSelect');
+            const prev = sel.value;
+            sel.innerHTML = `<option value="">All Tables in '${escapeHtml(currentDb)}'</option>` +
+                currentTables.map(t => `<option value="${escapeHtml(t.table_name)}">${escapeHtml(t.table_name)}</option>`).join('');
+            sel.value = prev;
+        }
 
-            if (currentTables.length === 0) {
-                container.innerHTML = `<div class="text-xs text-slate-500 py-8 text-center">No tables in this database.</div>`;
-                return;
+        function switchMainTab(tab) {
+            activeMainTab = tab;
+            ['history', 'tables', 'sql'].forEach(t => {
+                const panel = document.getElementById(`mainPanel_${t}`);
+                const btn = document.getElementById(`mainTabBtn_${t}`);
+                if (t === tab) {
+                    panel.classList.remove('hidden');
+                    btn.className = 'px-4 py-2 rounded-lg text-xs font-bold transition bg-emerald-500 text-slate-950 shadow-sm flex items-center gap-1.5';
+                } else {
+                    panel.classList.add('hidden');
+                    btn.className = 'px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white flex items-center gap-1.5';
+                }
+            });
+
+            if (tab === 'tables' && selectedTableName) {
+                loadSelectedTableContent();
             }
+        }
 
-            container.innerHTML = currentTables.map(t => {
-                if (t.is_dropped) {
-                    return `
-                        <div class="p-3 rounded-xl bg-rose-950/50 border border-rose-500/50 flex items-center justify-between gap-2 animate-pulse">
-                            <div>
-                                <div class="flex items-center gap-1.5">
-                                    <span class="text-xs font-bold text-rose-300 line-through">${escapeHtml(t.table_name)}</span>
-                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold">DROPPED!</span>
-                                </div>
-                                <div class="text-[11px] text-rose-400/90 mt-0.5">
-                                    ${t.snapshot_rows} rows + Schema saved (${t.snapshot_size_kb || 0} KB)
-                                </div>
-                            </div>
-                            <button onclick="restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[11px] font-bold transition shadow-lg shadow-emerald-500/20">
-                                &#9889; Restore Table
-                            </button>
-                        </div>
-                    `;
+        function setEventFilter(filter) {
+            activeEventFilter = filter;
+            ['ALL', 'DELETE', 'UPDATE', 'DDL'].forEach(f => {
+                const btn = document.getElementById(`filterPill_${f}`);
+                if (f === filter) {
+                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-white border border-slate-700 transition';
+                } else {
+                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-slate-400 hover:text-white border border-slate-800 transition';
                 }
-
-                if (t.is_truncated_alert) {
-                    return `
-                        <div onclick="openTableInBrowser('${escapeHtml(t.table_name)}')" class="p-3 rounded-xl bg-purple-950/40 border border-purple-500/50 cursor-pointer flex items-center justify-between gap-2">
-                            <div>
-                                <div class="flex items-center gap-1.5">
-                                    <span class="text-xs font-bold text-purple-300">${escapeHtml(t.table_name)}</span>
-                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-semibold">0 ROWS (WIPED)</span>
-                                </div>
-                                <div class="text-[11px] text-purple-300/80 mt-0.5">
-                                    ${t.snapshot_rows} rows in Vault snapshot
-                                </div>
-                            </div>
-                            <button onclick="event.stopPropagation(); restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-2.5 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[11px] font-bold transition">
-                                &#9889; Restore Rows
-                            </button>
-                        </div>
-                    `;
-                }
-
-                const statusBadge = t.is_protected
-                    ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-medium">Protected</span>`
-                    : `<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Unprotected</span>`;
-
-                const toggleBtn = t.is_protected
-                    ? `<button onclick="event.stopPropagation(); toggleTableProtection('${escapeHtml(t.table_name)}', false)" class="text-[11px] px-2 py-1 rounded bg-slate-800 hover:bg-rose-950 hover:text-rose-300 text-slate-400 transition" title="Disable protection">Unprotect</button>`
-                    : `<button onclick="event.stopPropagation(); toggleTableProtection('${escapeHtml(t.table_name)}', true)" class="text-[11px] px-2.5 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-medium transition">Protect</button>`;
-
-                return `
-                    <div onclick="openTableInBrowser('${escapeHtml(t.table_name)}')" class="p-3 rounded-xl bg-slate-950/70 hover:bg-slate-850 border border-slate-800/90 cursor-pointer transition flex items-center justify-between gap-2">
-                        <div class="min-w-0">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xs font-semibold text-white truncate">${escapeHtml(t.table_name)}</span>
-                                ${statusBadge}
-                            </div>
-                            <div class="text-[11px] text-slate-400 mt-0.5">
-                                ${t.row_count} rows &bull; PK: <code class="text-slate-300">${escapeHtml((t.primary_keys || []).join(',')) || 'auto'}</code>
-                                ${t.is_protected ? ` &bull; <span class="text-emerald-400/80">${t.snapshot_size_kb || 0} KB gz</span>` : ''}
-                            </div>
-                        </div>
-                        <div class="shrink-0">
-                            ${toggleBtn}
-                        </div>
-                    </div>
-                `;
-            }).join('');
+            });
+            renderTimeline();
         }
 
         function renderMissingTablesAlert() {
@@ -588,20 +641,14 @@ if (isset($_GET['action'])) {
                 cards.push(`
                     <div class="p-4 rounded-xl bg-gradient-to-r from-red-950/90 via-rose-950/80 to-slate-900 border-2 border-red-500/70 shadow-2xl flex items-center justify-between flex-wrap gap-3">
                         <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/50 flex items-center justify-center text-xl animate-bounce">
-                                &#128680;
-                            </div>
+                            <div class="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/50 flex items-center justify-center text-xl animate-bounce">&#128680;</div>
                             <div>
-                                <div class="text-sm font-bold text-white flex items-center gap-2">
-                                    <span>MISSING TABLE DETECTED: <code class="text-red-300">${escapeHtml(currentDb)}.${escapeHtml(t.table_name)}</code> was DROPPED!</span>
-                                </div>
-                                <div class="text-xs text-rose-200/90 mt-0.5">
-                                    Schema Registry has full <code class="text-cyan-300">CREATE TABLE</code> structure + Micro-Snapshot has <strong>${t.snapshot_rows} saved rows</strong> (${t.snapshot_size_kb || 0} KB compressed).
-                                </div>
+                                <div class="text-sm font-bold text-white">Table <code class="text-red-300">${escapeHtml(t.table_name)}</code> was DROPPED!</div>
+                                <div class="text-xs text-rose-200/90 mt-0.5">We have its full structure and <strong>${t.snapshot_rows} rows</strong> safely backed up.</div>
                             </div>
                         </div>
-                        <button onclick="restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/30 transition flex items-center gap-2">
-                            <span>&#9889;</span> Restore Dropped Table (${t.snapshot_rows} rows)
+                        <button onclick="restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-lg transition">
+                            &#8634; Restore Dropped Table (${t.snapshot_rows} rows)
                         </button>
                     </div>
                 `);
@@ -611,20 +658,14 @@ if (isset($_GET['action'])) {
                 cards.push(`
                     <div class="p-4 rounded-xl bg-gradient-to-r from-purple-950/90 via-indigo-950/80 to-slate-900 border-2 border-purple-500/60 shadow-xl flex items-center justify-between flex-wrap gap-3">
                         <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/50 flex items-center justify-center text-xl">
-                                &#9888;
-                            </div>
+                            <div class="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/50 flex items-center justify-center text-xl">&#9888;</div>
                             <div>
-                                <div class="text-sm font-bold text-white">
-                                    EMPTY / TRUNCATED TABLE ALERT: <code class="text-purple-300">${escapeHtml(currentDb)}.${escapeHtml(t.table_name)}</code> dropped to 0 rows!
-                                </div>
-                                <div class="text-xs text-purple-200/90 mt-0.5">
-                                    Micro-Snapshot Vault still holds <strong>${t.snapshot_rows} rows</strong> (${t.snapshot_size_kb || 0} KB compressed).
-                                </div>
+                                <div class="text-sm font-bold text-white">Table <code class="text-purple-300">${escapeHtml(t.table_name)}</code> was WIPED (0 rows left)!</div>
+                                <div class="text-xs text-purple-200/90 mt-0.5">Backup snapshot still has <strong>${t.snapshot_rows} rows</strong> ready to restore.</div>
                             </div>
                         </div>
-                        <button onclick="restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-lg shadow-emerald-500/30 transition flex items-center gap-2">
-                            <span>&#9889;</span> Restore ${t.snapshot_rows} Wiped Rows
+                        <button onclick="restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-lg transition">
+                            &#8634; Restore ${t.snapshot_rows} Rows
                         </button>
                     </div>
                 `);
@@ -635,177 +676,403 @@ if (isset($_GET['action'])) {
 
         function renderTimeline() {
             const container = document.getElementById('timelineContainer');
-            const filterTable = document.getElementById('timelineTableFilter').value;
+            const q = (document.getElementById('historySearchInput').value || '').trim().toLowerCase();
 
-            const list = filterTable
-                ? currentTimeline.filter(b => b.table_name === filterTable)
-                : currentTimeline;
+            const list = currentTimeline.filter(b => {
+                if (activeEventFilter === 'DELETE' && b.event_type !== 'DELETE') return false;
+                if (activeEventFilter === 'UPDATE' && b.event_type !== 'UPDATE') return false;
+                if (activeEventFilter === 'DDL' && !['DROP_TABLE', 'TRUNCATE_TABLE'].includes(b.event_type)) return false;
+
+                if (q) {
+                    const hay = (b.table_name + ' ' + b.event_type + ' ' + JSON.stringify(b.items || [])).toLowerCase();
+                    if (!hay.includes(q)) return false;
+                }
+                return true;
+            });
 
             if (list.length === 0) {
                 container.innerHTML = `
-                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-10 text-center space-y-2">
-                        <div class="text-base font-semibold text-slate-300">No destructive changes detected yet in <span class="text-emerald-400">${escapeHtml(currentDb)}</span></div>
-                        <p class="text-xs text-slate-400 max-w-lg mx-auto">
-                            Once a table is marked <span class="text-emerald-400">Protected</span>, any <code class="text-rose-300">DELETE</code>, <code class="text-amber-300">UPDATE</code>, <code class="text-purple-300">TRUNCATE</code>, or <code class="text-rose-400">DROP TABLE</code> executed in phpMyAdmin or your app will appear here with a 1-click Undo button.
+                    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-12 text-center space-y-2">
+                        <div class="text-2xl">&#10024;</div>
+                        <div class="text-sm font-bold text-white">${q || activeEventFilter !== 'ALL' ? 'No matching history found' : 'All clean — no recent deletions or edits'}</div>
+                        <p class="text-xs text-slate-400 max-w-md mx-auto">
+                            Whenever rows are deleted or edited, or a table is dropped in phpMyAdmin, they will show up right here with a 1-click Undo button.
                         </p>
                     </div>
                 `;
                 return;
             }
 
-            container.innerHTML = list.map(batch => {
-                const isRestored = !!batch.restored_at;
-                let badgeHtml = '';
-                let cardBorder = 'border-slate-800';
+            container.innerHTML = list.map((batch, idx) => renderHistoryCard(batch, `main_${idx}`)).join('');
+        }
 
-                if (batch.event_type === 'DROP_TABLE') {
-                    badgeHtml = `<span class="px-2.5 py-1 rounded-md bg-red-500/20 text-red-300 border border-red-500/40 text-xs font-bold">&#128165; DROP TABLE</span>`;
-                    cardBorder = isRestored ? 'border-slate-800' : 'border-red-500/50';
-                } else if (batch.event_type === 'TRUNCATE_TABLE') {
-                    badgeHtml = `<span class="px-2.5 py-1 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/40 text-xs font-bold">&#9888; TRUNCATE TABLE</span>`;
-                    cardBorder = isRestored ? 'border-slate-800' : 'border-purple-500/50';
-                } else if (batch.event_type === 'DELETE') {
-                    badgeHtml = `<span class="px-2.5 py-1 rounded-md bg-rose-500/15 text-rose-300 border border-rose-500/30 text-xs font-bold">&#128465; DELETE (${batch.affected_rows} row${batch.affected_rows > 1 ? 's' : ''})</span>`;
-                } else {
-                    badgeHtml = `<span class="px-2.5 py-1 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-bold">&#9998; UPDATE (${batch.affected_rows} row${batch.affected_rows > 1 ? 's' : ''})</span>`;
+        function renderHistoryCard(batch, uid) {
+            const isRestored = !!batch.restored_at;
+            const n = batch.affected_rows;
+            const rowWord = n === 1 ? 'row' : 'rows';
+
+            let icon = '&#9998;';
+            let headline = `Edited ${n} ${rowWord} in <span class="text-cyan-400">${escapeHtml(batch.table_name)}</span>`;
+            let pillClass = 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+            let borderClass = 'border-slate-800';
+
+            if (batch.event_type === 'DELETE') {
+                icon = '&#128465;';
+                headline = `Deleted ${n} ${rowWord} from <span class="text-rose-300">${escapeHtml(batch.table_name)}</span>`;
+                pillClass = 'bg-rose-500/15 text-rose-300 border-rose-500/30';
+            } else if (batch.event_type === 'DROP_TABLE') {
+                icon = '&#128165;';
+                headline = `Dropped table <span class="text-red-300">${escapeHtml(batch.table_name)}</span> (${n} ${rowWord} saved)`;
+                pillClass = 'bg-red-500/20 text-red-300 border-red-500/40';
+                if (!isRestored) borderClass = 'border-red-500/50';
+            } else if (batch.event_type === 'TRUNCATE_TABLE') {
+                icon = '&#9888;';
+                headline = `Wiped table <span class="text-purple-300">${escapeHtml(batch.table_name)}</span> (${n} ${rowWord} saved)`;
+                pillClass = 'bg-purple-500/20 text-purple-300 border-purple-500/40';
+                if (!isRestored) borderClass = 'border-purple-500/50';
+            }
+
+            const restoredPill = isRestored
+                ? `<span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-semibold">&#10003; Undone</span>`
+                : '';
+
+            return `
+                <div class="bg-slate-900 border ${borderClass} rounded-xl p-4 space-y-3 hover:border-slate-700 transition">
+                    <div class="flex items-center justify-between flex-wrap gap-3">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-xl border ${pillClass} flex items-center justify-center text-sm shrink-0">${icon}</div>
+                            <div>
+                                <div class="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
+                                    <span>${headline}</span>
+                                    ${restoredPill}
+                                </div>
+                                <div class="text-xs text-slate-400 mt-0.5" title="${escapeHtml(batch.executed_at)}">
+                                    ${timeAgo(batch.executed_at)} &bull; <span class="font-mono text-[11px] text-slate-500">${escapeHtml(batch.executed_at.substring(0, 19))}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-2">
+                            <button onclick="openRewindModalAt('${escapeHtml(batch.executed_at.substring(0, 19))}', '${escapeHtml(batch.table_name)}')" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition" title="Rewind table to right before this change">
+                                &#9194; Rewind Here
+                            </button>
+                            <button onclick="restoreBatch('${escapeHtml(batch.batch_key)}')" class="px-4 py-2 rounded-lg ${isRestored ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/15'} font-bold text-xs transition flex items-center gap-1.5">
+                                <span>&#8634;</span> ${isRestored ? 'Undo Again' : 'Undo'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Clean Compact Before / After Preview -->
+                    <div class="bg-slate-950 border border-slate-800/80 rounded-lg p-3 overflow-x-auto">
+                        ${renderCleanDiffTable(batch)}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCleanDiffTable(batch) {
+            const items = batch.items || [];
+            if (items.length === 0) return `<div class="text-xs text-slate-500">No details available.</div>`;
+
+            if (batch.event_type === 'DROP_TABLE' || batch.event_type === 'TRUNCATE_TABLE') {
+                const payload = items[0].old_data_parsed || {};
+                const sample = (payload.rows || []).slice(0, 3);
+                if (sample.length === 0) {
+                    return `<div class="text-xs text-slate-400">Table structure backed up and ready to recreate.</div>`;
                 }
+                const cols = Object.keys(sample[0]).slice(0, 6);
+                return `
+                    <div class="text-[11px] text-slate-400 mb-2">Sample of saved rows ready to restore (${payload.row_count || sample.length} total):</div>
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead><tr>${cols.map(c => `<th class="pb-1.5 pr-3 text-[11px] text-slate-400 font-semibold">${escapeHtml(c)}</th>`).join('')}</tr></thead>
+                        <tbody class="divide-y divide-slate-800/60">
+                            ${sample.map(r => `<tr>${cols.map(c => `<td class="py-1 pr-3 font-mono text-emerald-300/90">${escapeHtml(r[c])}</td>`).join('')}</tr>`).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
 
-                const restoredBadge = isRestored
-                    ? `<span class="px-2.5 py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">&#10003; Restored at ${escapeHtml(batch.restored_at)}</span>`
-                    : '';
-
-                const actionBtn = `
-                    <button onclick="openPitrAtTimestamp('${escapeHtml(batch.executed_at.substring(0, 19))}', '${escapeHtml(batch.table_name)}')" class="px-3 py-2 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 font-semibold text-xs transition" title="Rewind table to right before this event">
-                        &#9194; Rewind to Here
-                    </button>
-                    <button onclick="restoreBatch('${escapeHtml(batch.batch_key)}')" class="px-4 py-2 rounded-lg ${isRestored ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/20'} font-bold text-xs transition flex items-center gap-1.5">
-                        <span>&#8634;</span> ${isRestored ? 'Restore Again' : '1-Click Undo / Restore'}
-                    </button>`;
-
-                const diffContent = renderBatchDiffItems(batch);
+            if (batch.event_type === 'UPDATE') {
+                const rowsHtml = [];
+                items.slice(0, 10).forEach(item => {
+                    const oldObj = item.old_data_parsed || {};
+                    const newObj = item.new_data_parsed || {};
+                    Object.keys(oldObj).forEach(col => {
+                        if (String(oldObj[col]) !== String(newObj[col])) {
+                            rowsHtml.push(`
+                                <tr class="hover:bg-slate-900/60">
+                                    <td class="py-1.5 pr-3 font-mono text-cyan-400 text-[11px]">#${escapeHtml(item.pk_value)}</td>
+                                    <td class="py-1.5 pr-3 font-semibold text-slate-200">${escapeHtml(col)}</td>
+                                    <td class="py-1.5 pr-3 font-mono text-rose-400 line-through">${escapeHtml(oldObj[col])}</td>
+                                    <td class="py-1.5 pr-3 font-mono text-emerald-400 font-semibold">${escapeHtml(newObj[col])}</td>
+                                    ${batch.affected_rows > 1 ? `<td class="py-1.5 text-right"><button onclick="restoreSingleRow('${escapeHtml(batch.batch_key)}', ${item.id})" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-[11px] text-slate-300">Undo Row</button></td>` : ''}
+                                </tr>
+                            `);
+                        }
+                    });
+                });
 
                 return `
-                    <div class="bg-slate-900 border ${cardBorder} rounded-xl p-4 shadow-xl space-y-3">
-                        <div class="flex items-center justify-between flex-wrap gap-3">
-                            <div class="flex items-center gap-2.5 flex-wrap">
-                                ${badgeHtml}
-                                <span class="text-sm font-bold text-white">${escapeHtml(batch.db_name)}.<span class="text-cyan-400">${escapeHtml(batch.table_name)}</span></span>
-                                <span class="text-xs text-slate-400">&bull; ${escapeHtml(batch.executed_at)}</span>
-                                <span class="text-xs text-slate-500">&bull; by ${escapeHtml(batch.db_user || 'root')}</span>
-                                ${restoredBadge}
-                            </div>
-                            <div class="flex items-center gap-2">
-                                ${actionBtn}
-                            </div>
-                        </div>
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-[11px] text-slate-500 uppercase">
+                                <th class="pb-1.5 pr-3">Row ID</th>
+                                <th class="pb-1.5 pr-3">Column</th>
+                                <th class="pb-1.5 pr-3">Before (Will Restore)</th>
+                                <th class="pb-1.5 pr-3">After (Current)</th>
+                                ${batch.affected_rows > 1 ? `<th class="pb-1.5 text-right">Action</th>` : ''}
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/50">${rowsHtml.join('')}</tbody>
+                    </table>
+                    ${batch.affected_rows > 10 ? `<div class="text-[11px] text-slate-500 mt-2">Showing first 10 of ${batch.affected_rows} edited rows. Clicking "Undo" restores all ${batch.affected_rows}.</div>` : ''}
+                `;
+            }
 
-                        <!-- Visual Row Diff / Snapshot Preview -->
-                        <div class="bg-slate-950 border border-slate-800/90 rounded-lg p-3 overflow-x-auto">
-                            ${diffContent}
+            // DELETE: clean compact table of deleted rows
+            const firstObj = items[0].old_data_parsed || {};
+            const cols = Object.keys(firstObj).slice(0, 6);
+            return `
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="border-b border-slate-800 text-[11px] text-slate-500 uppercase">
+                            ${cols.map(c => `<th class="pb-1.5 pr-3">${escapeHtml(c)}</th>`).join('')}
+                            ${batch.affected_rows > 1 ? `<th class="pb-1.5 text-right">Action</th>` : ''}
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-800/50">
+                        ${items.slice(0, 10).map(item => {
+                            const o = item.old_data_parsed || {};
+                            return `
+                                <tr class="hover:bg-slate-900/60">
+                                    ${cols.map(c => `<td class="py-1.5 pr-3 font-mono text-rose-300">${escapeHtml(o[c])}</td>`).join('')}
+                                    ${batch.affected_rows > 1 ? `<td class="py-1.5 text-right"><button onclick="restoreSingleRow('${escapeHtml(batch.batch_key)}', ${item.id})" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-500 hover:text-slate-950 text-[11px] text-slate-300">Restore</button></td>` : ''}
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+                ${batch.affected_rows > 10 ? `<div class="text-[11px] text-slate-500 mt-2">Showing first 10 of ${batch.affected_rows} deleted rows. Clicking "Undo" restores all ${batch.affected_rows}.</div>` : ''}
+            `;
+        }
+
+        // =========================================================
+        // VIEW 2: TABLES & DATA LOGIC
+        // =========================================================
+        function renderTablesList() {
+            const container = document.getElementById('tablesList');
+            const q = (document.getElementById('tableSearchInput')?.value || '').trim().toLowerCase();
+
+            // Put dropped/truncated tables at the top
+            const sorted = [...currentTables].sort((a, b) => {
+                const aAlert = (a.is_dropped || a.is_truncated_alert) ? 1 : 0;
+                const bAlert = (b.is_dropped || b.is_truncated_alert) ? 1 : 0;
+                if (aAlert !== bAlert) return bAlert - aAlert;
+                return a.table_name.localeCompare(b.table_name);
+            });
+
+            const filtered = q ? sorted.filter(t => t.table_name.toLowerCase().includes(q)) : sorted;
+
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="text-xs text-slate-500 py-8 text-center">No matching tables.</div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(t => {
+                const isSelected = t.table_name === selectedTableName;
+
+                if (t.is_dropped) {
+                    return `
+                        <div onclick="selectTable('${escapeHtml(t.table_name)}')" class="p-3 rounded-xl bg-rose-950/50 border ${isSelected ? 'border-rose-400' : 'border-rose-500/40'} cursor-pointer flex items-center justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="text-xs font-bold text-rose-300 line-through truncate">${escapeHtml(t.table_name)}</div>
+                                <div class="text-[11px] text-rose-400">DROPPED &bull; ${t.snapshot_rows} rows saved</div>
+                            </div>
+                            <button onclick="event.stopPropagation(); restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[11px] font-bold shrink-0">
+                                Restore
+                            </button>
                         </div>
+                    `;
+                }
+
+                // Clean ON / OFF Toggle Switch
+                const toggleSwitch = `
+                    <button onclick="event.stopPropagation(); toggleTableProtection('${escapeHtml(t.table_name)}', ${!t.is_protected})"
+                        class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${t.is_protected ? 'bg-emerald-500' : 'bg-slate-700'}"
+                        title="${t.is_protected ? 'Protected (Click to turn off)' : 'Unprotected (Click to protect)'}">
+                        <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${t.is_protected ? 'translate-x-4.5 ml-[18px]' : 'ml-[3px]'}"></span>
+                    </button>
+                `;
+
+                return `
+                    <div role="button" tabindex="0" onclick="selectTable('${escapeHtml(t.table_name)}')" onkeydown="if(event.key==='Enter'||event.key===' ')selectTable('${escapeHtml(t.table_name)}')" class="p-2.5 rounded-xl border cursor-pointer transition flex items-center justify-between gap-2 ${isSelected ? 'bg-slate-800 border-emerald-500/50' : 'bg-slate-950/60 hover:bg-slate-850 border-slate-800/80'}">
+                        <div class="min-w-0">
+                            <div class="text-xs font-semibold text-white truncate">${escapeHtml(t.table_name)}</div>
+                            <div class="text-[11px] text-slate-400">${t.row_count} rows ${t.is_truncated_alert ? '<span class="text-purple-400 font-bold">&bull; WIPED!</span>' : ''}</div>
+                        </div>
+                        ${toggleSwitch}
                     </div>
                 `;
             }).join('');
         }
 
-        function renderBatchDiffItems(batch) {
-            const items = batch.items || [];
-            if (items.length === 0) return `<div class="text-xs text-slate-500">No row details available</div>`;
+        function selectTable(tableName, shouldLoad = true) {
+            selectedTableName = tableName;
+            renderTablesList();
 
-            if (batch.event_type === 'DROP_TABLE' || batch.event_type === 'TRUNCATE_TABLE') {
-                const payload = items[0].old_data_parsed || {};
-                const sampleRows = (payload.rows || []).slice(0, 5);
-                return `
-                    <div class="space-y-2 text-xs">
-                        <div class="text-slate-300 font-medium">
-                            Vault Snapshot Ready: <span class="text-emerald-400 font-bold">${payload.row_count || 0} rows</span> ${batch.event_type === 'DROP_TABLE' ? '+ Full <code class="text-cyan-300">CREATE TABLE</code> Schema &amp; Indexes preserved' : 'preserved before TRUNCATE'}.
-                        </div>
-                        ${sampleRows.length > 0 ? `
-                            <div class="text-[11px] text-slate-400">Preview of saved rows to be restored:</div>
-                            <pre class="text-[11px] text-emerald-300/90 bg-slate-900/90 p-2.5 rounded border border-slate-800 overflow-x-auto">${escapeHtml(JSON.stringify(sampleRows, null, 2))}</pre>
-                        ` : ''}
-                    </div>
-                `;
+            const meta = currentTables.find(t => t.table_name === tableName);
+            document.getElementById('selectedTableTitle').textContent = tableName;
+            const badge = document.getElementById('selectedTableBadge');
+            if (meta) {
+                badge.classList.remove('hidden');
+                if (meta.is_dropped) {
+                    badge.className = 'px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 text-[11px] font-bold';
+                    badge.textContent = 'DROPPED';
+                } else if (meta.is_protected) {
+                    badge.className = 'px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[11px] font-semibold';
+                    badge.textContent = 'Protected';
+                } else {
+                    badge.className = 'px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[11px]';
+                    badge.textContent = 'Unprotected';
+                }
+                document.getElementById('selectedTableMeta').textContent = meta.is_dropped
+                    ? `Table is missing in MySQL. Backup has ${meta.snapshot_rows} rows.`
+                    : `${meta.row_count} live rows • Backup size: ${meta.snapshot_size_kb || 0} KB`;
             }
 
-            return `
-                <div class="space-y-2">
-                    ${items.map(item => {
-                        const oldObj = item.old_data_parsed || {};
-                        const newObj = item.new_data_parsed || {};
+            if (shouldLoad || activeMainTab === 'tables') {
+                loadSelectedTableContent();
+            }
+        }
 
-                        if (batch.event_type === 'DELETE') {
-                            const kvBadges = Object.entries(oldObj).map(([k, v]) =>
-                                `<span class="inline-flex items-center px-2 py-0.5 rounded bg-rose-950/60 border border-rose-500/20 text-[11px] mr-1.5 mb-1">
-                                    <span class="text-slate-400 mr-1">${escapeHtml(k)}:</span>
-                                    <span class="text-rose-300 font-mono">${escapeHtml(v)}</span>
-                                </span>`
-                            ).join('');
+        function switchTableSubTab(sub) {
+            activeTableSubTab = sub;
+            ['data', 'backup', 'history'].forEach(s => {
+                document.getElementById(`subPanel_${s}`).classList.toggle('hidden', s !== sub);
+                document.getElementById(`subTabBtn_${s}`).className = s === sub
+                    ? 'px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-800 text-white'
+                    : 'px-3 py-1.5 rounded-md text-xs font-medium text-slate-400 hover:text-white';
+            });
+            loadSelectedTableContent();
+        }
 
-                            return `
-                                <div class="flex items-start justify-between gap-2 border-b border-slate-900 pb-2 last:border-none last:pb-0">
-                                    <div>
-                                        <span class="text-[11px] font-mono text-slate-400 mr-2">PK [${escapeHtml(item.pk_value)}]:</span>
-                                        ${kvBadges}
-                                    </div>
-                                    ${batch.affected_rows > 1 ? `
-                                        <button onclick="restoreSingleRow('${escapeHtml(batch.batch_key)}', ${item.id})" class="shrink-0 px-2 py-1 rounded bg-slate-800 hover:bg-emerald-600 hover:text-slate-950 text-slate-300 text-[11px] font-medium transition">
-                                            Restore This Row
-                                        </button>
-                                    ` : ''}
-                                </div>
-                            `;
-                        }
+        function loadSelectedTableContent() {
+            if (!selectedTableName) return;
+            if (activeTableSubTab === 'data') loadBrowserTable(selectedTableName);
+            else if (activeTableSubTab === 'backup') renderSelectedTableBackup();
+            else if (activeTableSubTab === 'history') renderSelectedTableHistory();
+        }
 
-                        // UPDATE Diff: highlight only columns that changed!
-                        const changedCols = [];
-                        const unchangedCols = [];
-                        for (const key of Object.keys(oldObj)) {
-                            const oldVal = oldObj[key];
-                            const newVal = newObj[key];
-                            if (String(oldVal) !== String(newVal)) {
-                                changedCols.push(`
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded bg-amber-950/50 border border-amber-500/30 text-[11px] mr-2 mb-1 font-mono">
-                                        <span class="text-slate-300 mr-1.5 font-sans font-semibold">${escapeHtml(key)}:</span>
-                                        <span class="line-through text-rose-400 mr-1.5">${escapeHtml(oldVal)}</span>
-                                        <span class="text-slate-400 mr-1.5">&rarr;</span>
-                                        <span class="text-emerald-400 font-bold">${escapeHtml(newVal)}</span>
-                                    </span>
-                                `);
-                            } else {
-                                unchangedCols.push(`<span class="text-[11px] text-slate-500 mr-2">${escapeHtml(key)}=${escapeHtml(oldVal)}</span>`);
-                            }
-                        }
+        async function loadBrowserTable(tableName) {
+            const container = document.getElementById('browserRowsContainer');
+            const meta = currentTables.find(t => t.table_name === tableName);
+            if (meta && meta.is_dropped) {
+                container.innerHTML = `
+                    <div class="p-10 text-center space-y-3">
+                        <div class="text-sm font-bold text-rose-300">Table '${escapeHtml(tableName)}' was dropped in MySQL.</div>
+                        <button onclick="restoreTableFromVault('${escapeHtml(tableName)}')" class="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs">
+                            &#8634; Restore Dropped Table (${meta.snapshot_rows} rows)
+                        </button>
+                    </div>
+                `;
+                return;
+            }
 
-                        return `
-                            <div class="flex items-start justify-between gap-2 border-b border-slate-900 pb-2 last:border-none last:pb-0">
-                                <div>
-                                    <span class="text-[11px] font-mono text-cyan-400 mr-2">Row PK [${escapeHtml(item.pk_value)}]:</span>
-                                    ${changedCols.join('')}
-                                    <div class="mt-0.5">${unchangedCols.slice(0, 5).join('')}</div>
-                                </div>
-                                ${batch.affected_rows > 1 ? `
-                                    <button onclick="restoreSingleRow('${escapeHtml(batch.batch_key)}', ${item.id})" class="shrink-0 px-2 py-1 rounded bg-slate-800 hover:bg-emerald-600 hover:text-slate-950 text-slate-300 text-[11px] font-medium transition">
-                                        Undo Row
-                                    </button>
-                                ` : ''}
-                            </div>
-                        `;
-                    }).join('')}
+            try {
+                const res = await apiCall('browse_table', { db: currentDb, table: tableName });
+                const rows = res.rows || [];
+                if (rows.length === 0) {
+                    container.innerHTML = `<div class="p-10 text-center text-xs text-slate-400">This table currently has 0 rows.</div>`;
+                    return;
+                }
+                const cols = Object.keys(rows[0]);
+                container.innerHTML = `
+                    <table class="w-full border-collapse text-left">
+                        <thead class="sticky top-0 bg-slate-900">
+                            <tr>${cols.map(c => `<th class="px-3 py-2 text-[11px] font-semibold uppercase text-slate-400 border-b border-slate-800">${escapeHtml(c)}</th>`).join('')}</tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-800/50">
+                            ${rows.map(r => `<tr class="hover:bg-slate-900/60">${cols.map(c => `<td class="px-3 py-2 text-xs text-slate-200 font-mono whitespace-nowrap">${escapeHtml(r[c])}</td>`).join('')}</tr>`).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (err) {
+                container.innerHTML = `<div class="p-8 text-center text-xs text-rose-400">${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderSelectedTableBackup() {
+            const container = document.getElementById('tableBackupDetails');
+            const t = currentTables.find(x => x.table_name === selectedTableName);
+            if (!t) return;
+
+            if (!t.is_protected && !t.is_dropped) {
+                container.innerHTML = `
+                    <div class="p-8 rounded-xl bg-slate-950 border border-slate-800 text-center space-y-3">
+                        <div class="text-sm font-bold text-white">Protection is turned OFF for <code class="text-cyan-400">${escapeHtml(t.table_name)}</code></div>
+                        <p class="text-xs text-slate-400">Turn on protection to automatically save its structure and compressed backup snapshots.</p>
+                        <button onclick="toggleTableProtection('${escapeHtml(t.table_name)}', true)" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs">
+                            Turn On Protection
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Saved Rows</div>
+                        <div class="text-base font-bold text-white mt-0.5">${t.snapshot_rows ?? 0} rows</div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Compressed Size</div>
+                        <div class="text-base font-bold text-emerald-400 mt-0.5">${t.snapshot_size_kb || 0} KB</div>
+                    </div>
+                    <div class="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                        <div class="text-[11px] text-slate-400">Last Updated</div>
+                        <div class="text-xs font-mono text-slate-200 mt-1.5">${escapeHtml(t.snapshot_updated_at || 'Just now')}</div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 flex-wrap">
+                    ${!t.is_dropped ? `<button onclick="toggleTableProtection('${escapeHtml(t.table_name)}', true)" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold border border-slate-700">Take Fresh Snapshot Now</button>` : ''}
+                    <button onclick="restoreTableFromVault('${escapeHtml(t.table_name)}')" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold">
+                        &#8634; Restore Full Table Snapshot
+                    </button>
+                </div>
+
+                <div class="space-y-1.5">
+                    <div class="text-xs font-semibold text-slate-300">Backed-Up Table Structure (<code class="text-cyan-400">CREATE TABLE</code>)</div>
+                    <pre class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-emerald-300/90 overflow-x-auto max-h-72">${escapeHtml(t.create_ddl || 'No DDL recorded yet.')}</pre>
                 </div>
             `;
         }
 
+        function renderSelectedTableHistory() {
+            const container = document.getElementById('tableSpecificHistory');
+            const list = currentTimeline.filter(b => b.table_name === selectedTableName);
+            if (list.length === 0) {
+                container.innerHTML = `<div class="p-10 text-center text-xs text-slate-500">No undo history recorded for <strong>${escapeHtml(selectedTableName)}</strong> yet.</div>`;
+                return;
+            }
+            container.innerHTML = list.map((b, i) => renderHistoryCard(b, `tbl_${i}`)).join('');
+        }
+
+        // =========================================================
+        // ACTIONS: PROTECT, RESTORE, SYNC, CLEAR, SAFE SQL, REWIND
+        // =========================================================
         async function toggleTableProtection(tableName, protect) {
             try {
                 if (protect) {
                     await apiCall('protect_table', { db: currentDb, table: tableName });
-                    showToast(`Table '${tableName}' is now protected against DELETE, UPDATE, TRUNCATE & DROP!`);
+                    showToast(`Protection turned ON for '${tableName}'.`);
                 } else {
                     await apiCall('unprotect_table', { db: currentDb, table: tableName });
-                    showToast(`Removed protection from '${tableName}'.`);
+                    showToast(`Protection turned OFF for '${tableName}'.`);
                 }
                 await onDatabaseChange(currentDb);
+                if (selectedTableName) selectTable(selectedTableName, true);
             } catch (err) {
                 showToast(err.message, 'error');
             }
@@ -815,7 +1082,7 @@ if (isset($_GET['action'])) {
             if (!currentDb) return;
             try {
                 const res = await apiCall('protect_all', { db: currentDb });
-                showToast(`Protected all ${res.protected.length} table(s) in '${currentDb}'!`);
+                showToast(`Protected ${res.protected.length} table(s) in '${currentDb}'!`);
                 await onDatabaseChange(currentDb);
             } catch (err) {
                 showToast(err.message, 'error');
@@ -826,20 +1093,27 @@ if (isset($_GET['action'])) {
             try {
                 const res = await apiCall('restore', { batch_key: batchKey });
                 const r = res.restore;
-                showToast(`Restored ${r.restored_rows} row(s) into ${r.db_name}.${r.table_name} (${r.event_type})!`);
+                showToast(`Undone! Restored ${r.restored_rows} row(s) in '${r.table_name}'.`);
                 await onDatabaseChange(currentDb);
-                if (activeTab === 'browser' && currentBrowserTable) {
-                    loadBrowserTable(currentBrowserTable);
-                }
             } catch (err) {
-                showToast('Restore failed: ' + err.message, 'error');
+                showToast('Undo failed: ' + err.message, 'error');
             }
         }
 
         async function restoreSingleRow(batchKey, eventId) {
             try {
                 const res = await apiCall('restore', { batch_key: batchKey, event_id: eventId });
-                showToast(`Restored single row in ${res.restore.table_name}!`);
+                showToast(`Restored 1 row in '${res.restore.table_name}'.`);
+                await onDatabaseChange(currentDb);
+            } catch (err) {
+                showToast('Undo failed: ' + err.message, 'error');
+            }
+        }
+
+        async function restoreTableFromVault(tableName) {
+            try {
+                const res = await apiCall('restore_table_vault', { db: currentDb, table: tableName });
+                showToast(`Restored table '${res.restore.table_name}' (${res.restore.restored_rows} rows)!`);
                 await onDatabaseChange(currentDb);
             } catch (err) {
                 showToast('Restore failed: ' + err.message, 'error');
@@ -852,22 +1126,20 @@ if (isset($_GET['action'])) {
                 const res = await apiCall('sync', { db: currentDb });
                 currentTables = res.tables || [];
                 currentTimeline = res.timeline || [];
-                renderTablesList();
-                renderTimeline();
-                showToast(`Vault synced! (${res.sync.new_events_synced} new changes detected)`);
+                updateDashboardUI();
+                showToast(`Synced! (${res.sync.new_events_synced} new changes)`);
             } catch (err) {
                 showToast(err.message, 'error');
             }
         }
 
-        async function clearHistoryNow(mode = 'all') {
+        async function clearHistoryNow() {
             try {
-                const res = await apiCall('clear_history', { db: currentDb, mode });
-                const c = res.cleanup;
-                showToast(`Cleared ${c.deleted_events} history event(s)! Vault compacted to ${c.vault_size_kb} KB.`);
+                const res = await apiCall('clear_history', { db: currentDb, mode: 'all' });
+                showToast(`Cleared ${res.cleanup.deleted_events} history item(s). Vault size: ${res.cleanup.vault_size_kb} KB.`);
                 await onDatabaseChange(currentDb);
             } catch (err) {
-                showToast('Cleanup failed: ' + err.message, 'error');
+                showToast(err.message, 'error');
             }
         }
 
@@ -882,328 +1154,72 @@ if (isset($_GET['action'])) {
             }
         }
 
-        async function restoreTableFromVault(tableName) {
-            if (!currentDb || !tableName) return;
-            try {
-                const res = await apiCall('restore_table_vault', { db: currentDb, table: tableName });
-                const r = res.restore;
-                showToast(`Restored table '${r.table_name}' (${r.restored_rows} rows) from Schema Registry & Micro-Snapshot Vault!`);
-                await onDatabaseChange(currentDb);
-                if (activeTab === 'vault') loadSchemaRegistry();
-                if (activeTab === 'browser' && currentBrowserTable === tableName) loadBrowserTable(tableName);
-            } catch (err) {
-                showToast('Vault restore failed: ' + err.message, 'error');
-            }
-        }
-
-        async function loadSchemaRegistry() {
-            if (!currentDb) return;
-            const container = document.getElementById('vaultRegistryContainer');
-            try {
-                const res = await apiCall('schema_registry', { db: currentDb });
-                const list = res.registry || [];
-                if (list.length === 0) {
-                    container.innerHTML = `<div class="p-8 text-center text-xs text-slate-400">No tables protected yet in <strong>${escapeHtml(currentDb)}</strong>. Click "Protect All Tables in DB" on the left sidebar!</div>`;
-                    return;
-                }
-
-                container.innerHTML = list.map((item, idx) => {
-                    const isDropped = Number(item.is_dropped) === 1;
-                    return `
-                        <div class="p-4 rounded-xl bg-slate-950 border ${isDropped ? 'border-red-500/60' : 'border-slate-800'} space-y-2">
-                            <div class="flex items-center justify-between flex-wrap gap-2">
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <span class="text-sm font-bold text-white">${escapeHtml(item.table_name)}</span>
-                                    ${isDropped
-                                        ? `<span class="px-2 py-0.5 rounded bg-red-500/20 text-red-300 text-[11px] font-bold">DROPPED (MISSING IN MYSQL)</span>`
-                                        : `<span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[11px] font-semibold">Schema + Checksum Active</span>`
-                                    }
-                                    <span class="text-xs text-slate-400">&bull; Checksum: <code class="text-cyan-300">${escapeHtml(item.last_checksum || '0')}</code></span>
-                                    <span class="text-xs text-slate-400">&bull; Snapshot: <strong class="text-white">${item.row_count} rows</strong> (${item.snapshot_size_kb} KB <code class="text-emerald-400">.json.gz</code>)</span>
-                                    <span class="text-xs text-slate-500">&bull; Schema Versions: ${item.schema_versions}</span>
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <button onclick="document.getElementById('ddlBox_${idx}').classList.toggle('hidden')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-cyan-300 border border-slate-700">
-                                        View CREATE TABLE
-                                    </button>
-                                    <button onclick="restoreTableFromVault('${escapeHtml(item.table_name)}')" class="px-3 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">
-                                        &#9889; Restore Snapshot
-                                    </button>
-                                </div>
-                            </div>
-                            <pre id="ddlBox_${idx}" class="hidden mt-2 p-3 rounded-lg bg-slate-900 border border-slate-800 text-[11px] text-emerald-300 font-mono overflow-x-auto">${escapeHtml(item.create_ddl)}</pre>
-                        </div>
-                    `;
-                }).join('');
-            } catch (err) {
-                container.innerHTML = `<div class="p-4 text-xs text-rose-400">${escapeHtml(err.message)}</div>`;
-            }
-        }
-
-        function switchTab(tab) {
-            activeTab = tab;
-            ['timeline', 'vault', 'browser', 'sandbox', 'binlog'].forEach(t => {
-                const panel = document.getElementById(`tabPanel_${t}`);
-                const btn = document.getElementById(`tabBtn_${t}`);
-                if (!panel || !btn) return;
-                if (t === tab) {
-                    panel.classList.remove('hidden');
-                    btn.className = 'px-4 py-2 rounded-lg text-xs font-semibold transition bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
-                } else {
-                    panel.classList.add('hidden');
-                    btn.className = 'px-4 py-2 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white';
-                }
-            });
-
-            if (tab === 'vault') {
-                loadSchemaRegistry();
-            } else if (tab === 'browser' && currentBrowserTable) {
-                loadBrowserTable(currentBrowserTable);
-            } else if (tab === 'binlog') {
-                loadBinlogStatus();
-            }
-        }
-
-        function openTableInBrowser(tableName) {
-            currentBrowserTable = tableName;
-            switchTab('browser');
-        }
-
-        async function loadBrowserTable(tableName) {
-            if (!currentDb || !tableName) return;
-            currentBrowserTable = tableName;
-            document.getElementById('browserTableName').textContent = `${currentDb}.${tableName}`;
-            const container = document.getElementById('browserRowsContainer');
-
-            try {
-                const res = await apiCall('browse_table', { db: currentDb, table: tableName });
-                const rows = res.rows || [];
-                if (rows.length === 0) {
-                    container.innerHTML = `<div class="p-8 text-center text-xs text-slate-400">Table <strong>${escapeHtml(tableName)}</strong> currently has 0 rows. Check the Recovery Timeline tab to restore deleted/truncated rows!</div>`;
-                    return;
-                }
-
-                const cols = Object.keys(rows[0]);
-                const thead = cols.map(c => `<th class="px-3 py-2 text-left text-[11px] font-semibold uppercase text-slate-400 bg-slate-950 border-b border-slate-800">${escapeHtml(c)}</th>`).join('');
-                const tbody = rows.map(r => {
-                    const tds = cols.map(c => `<td class="px-3 py-2 text-xs text-slate-200 border-b border-slate-800/60 font-mono">${escapeHtml(r[c])}</td>`).join('');
-                    return `<tr class="hover:bg-slate-800/40">${tds}</tr>`;
-                }).join('');
-
-                container.innerHTML = `
-                    <table class="w-full border-collapse">
-                        <thead><tr>${thead}</tr></thead>
-                        <tbody>${tbody}</tbody>
-                    </table>
-                `;
-            } catch (err) {
-                container.innerHTML = `<div class="p-8 text-center text-xs text-rose-400">${escapeHtml(err.message)}</div>`;
-            }
-        }
-
         async function simulateMistake(type) {
-            if (!currentDb || !currentBrowserTable) {
-                showToast('Select a table first!', 'error');
-                return;
-            }
-            const tbl = currentBrowserTable;
-
-            // Ensure table is protected before simulating disaster!
+            if (currentDb !== 'timemachine_demo' || !selectedTableName) return;
+            const tbl = selectedTableName;
             await apiCall('protect_table', { db: currentDb, table: tbl });
 
             let sql = '';
-            if (type === 'delete_all') {
-                sql = `DELETE FROM \`${tbl}\``;
-            } else if (type === 'drop_table') {
-                sql = `DROP TABLE \`${tbl}\``;
-            } else if (type === 'update_all') {
-                // Find a non-PK column to corrupt
+            if (type === 'delete_all') sql = `DELETE FROM \`${tbl}\``;
+            else if (type === 'drop_table') sql = `DROP TABLE \`${tbl}\``;
+            else if (type === 'update_all') {
                 const res = await apiCall('browse_table', { db: currentDb, table: tbl });
-                if (!res.rows || res.rows.length === 0) {
-                    showToast('Table has no rows to update!', 'error');
-                    return;
-                }
+                if (!res.rows || res.rows.length === 0) return showToast('Table is empty!', 'error');
                 const cols = Object.keys(res.rows[0]);
-                const targetCol = cols.length > 1 ? cols[1] : cols[0];
-                sql = `UPDATE \`${tbl}\` SET \`${targetCol}\` = 'ACCIDENTAL_OVERWRITE'`;
+                sql = `UPDATE \`${tbl}\` SET \`${cols[1] || cols[0]}\` = 'ACCIDENTAL_EDIT'`;
             }
 
             try {
-                await apiCall('sandbox_sql', { db: currentDb, sql: sql, dry_run: false });
-                showToast(`Simulated mistake: "${sql}"! Switching to Timeline so you can Undo it in 1 click!`);
+                await apiCall('sandbox_sql', { db: currentDb, sql, dry_run: false });
+                showToast(`Simulated "${sql}" — now click Undo!`);
                 await onDatabaseChange(currentDb);
-                switchTab('timeline');
+                switchMainTab('history');
             } catch (err) {
                 showToast(err.message, 'error');
             }
         }
 
-        function formatLocalSqlTime(dateObj) {
-            const pad = n => String(n).padStart(2, '0');
-            return `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())} ${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}:${pad(dateObj.getSeconds())}`;
-        }
-
-        function setPitrMinutesAgo(mins) {
-            const d = new Date(Date.now() - mins * 60000);
-            document.getElementById('pitrTimestampInput').value = formatLocalSqlTime(d);
-            runPitr(true);
-        }
-
-        function openPitrAtTimestamp(ts, tableName = '') {
-            switchTab('sandbox');
-            document.getElementById('pitrTimestampInput').value = ts;
-            const sel = document.getElementById('pitrTableSelect');
-            if (sel && tableName) sel.value = tableName;
-            runPitr(true);
-        }
-
-        async function runPitr(previewOnly = true) {
-            if (!currentDb) return;
-            let targetTime = document.getElementById('pitrTimestampInput').value.trim();
-            if (!targetTime) {
-                setPitrMinutesAgo(10);
-                targetTime = document.getElementById('pitrTimestampInput').value.trim();
-            }
-            const table = document.getElementById('pitrTableSelect').value;
-            const box = document.getElementById('pitrResultBox');
-            box.classList.remove('hidden');
-            box.innerHTML = `<div class="text-slate-400">Calculating Time-Travel rollback plan...</div>`;
-
-            try {
-                if (previewOnly) {
-                    const res = await apiCall('pitr_preview', { db: currentDb, target_time: targetTime, table });
-                    const p = res.preview;
-                    if (!p.batches || p.batches.length === 0) {
-                        box.innerHTML = `
-                            <div class="text-emerald-400 font-semibold">
-                                &#10003; No unrestored changes occurred on or after <code class="text-white">${escapeHtml(p.target_timestamp)}</code> (Current Server Time: <code class="text-slate-400">${escapeHtml(p.current_mysql_time)}</code>).
-                            </div>
-                        `;
-                        return;
-                    }
-
-                    const rowsHtml = p.batches.map((b, i) => `
-                        <div class="flex items-center justify-between py-1.5 border-b border-slate-800/80 last:border-none">
-                            <div class="flex items-center gap-2">
-                                <span class="text-slate-500 font-mono">#${i + 1}</span>
-                                <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold text-[11px]">${escapeHtml(b.event_type)}</span>
-                                <span class="font-semibold text-white">${escapeHtml(b.table_name)}</span>
-                                <span class="text-slate-400">(${b.affected_rows} row${b.affected_rows > 1 ? 's' : ''})</span>
-                            </div>
-                            <span class="text-slate-400 font-mono text-[11px]">${escapeHtml(b.executed_at)}</span>
-                        </div>
-                    `).join('');
-
-                    box.innerHTML = `
-                        <div class="text-indigo-300 font-bold">
-                            &#9200; Time-Travel Preview: Rewinding to <code class="text-white">${escapeHtml(p.target_timestamp)}</code> will undo <strong>${p.batches_to_undo} batch(es)</strong> (${p.total_events_to_undo} row changes) in reverse order:
-                        </div>
-                        <div class="mt-2 bg-slate-900 border border-slate-800 rounded-lg p-3 max-h-56 overflow-y-auto">
-                            ${rowsHtml}
-                        </div>
-                    `;
-                } else {
-                    const res = await apiCall('pitr_execute', { db: currentDb, target_time: targetTime, table });
-                    const r = res.pitr;
-                    showToast(r.message);
-                    box.innerHTML = `<div class="text-emerald-400 font-bold">&#10003; ${escapeHtml(r.message)}</div>`;
-                    await onDatabaseChange(currentDb);
-                }
-            } catch (err) {
-                box.innerHTML = `<div class="text-rose-400 font-bold">Time-Travel Error: ${escapeHtml(err.message)}</div>`;
-            }
-        }
-
+        // Safe SQL Runner
         function fillSampleSql(kind) {
+            const hasStudents = currentTables.some(t => t.table_name === 'students' && !t.is_dropped);
             const firstLive = currentTables.find(t => !t.is_dropped);
-            const tbl = firstLive ? firstLive.table_name : 'students';
+            const tbl = hasStudents ? 'students' : (firstLive ? firstLive.table_name : 'students');
             const input = document.getElementById('sandboxSqlInput');
-            if (kind === 'update_one') {
-                input.value = tbl === 'students'
-                    ? `UPDATE \`students\` SET \`fee_paid\` = 99000.00 WHERE \`roll_no\` = 'LMS-101';`
-                    : `SELECT * FROM \`${tbl}\` LIMIT 5;`;
-            } else if (kind === 'update_no_where') {
-                input.value = tbl === 'students'
-                    ? `UPDATE \`students\` SET \`status\` = 'Suspended';`
-                    : `UPDATE \`${tbl}\` SET \`id\` = \`id\`;`;
-            } else if (kind === 'delete_where') {
-                input.value = tbl === 'students'
-                    ? `DELETE FROM \`students\` WHERE \`status\` = 'Active';`
-                    : `DELETE FROM \`${tbl}\` LIMIT 1;`;
-            }
+            if (kind === 'update_one') input.value = tbl === 'students' ? `UPDATE \`students\` SET \`fee_paid\` = 99000 WHERE \`roll_no\` = 'LMS-101';` : `SELECT * FROM \`${tbl}\` LIMIT 5;`;
+            else if (kind === 'update_no_where') input.value = tbl === 'students' ? `UPDATE \`students\` SET \`fee_paid\` = 0;` : `UPDATE \`${tbl}\` SET \`updated_at\` = NOW();`;
+            else if (kind === 'delete_where') input.value = tbl === 'students' ? `DELETE FROM \`students\` WHERE \`status\` = 'Active';` : `DELETE FROM \`${tbl}\` LIMIT 1;`;
         }
 
         async function runSandboxSql(dryRun) {
             const sql = document.getElementById('sandboxSqlInput').value.trim();
-            if (!sql) {
-                showToast('Enter a SQL query first.', 'error');
-                return;
-            }
+            if (!sql) return showToast('Enter a SQL query first.', 'error');
             const box = document.getElementById('sandboxResultBox');
             box.classList.remove('hidden');
-            box.innerHTML = `<div class="text-slate-400">Running inside Safe Transaction Sandbox...</div>`;
+            box.innerHTML = `<div class="text-slate-400">Running...</div>`;
 
             try {
                 const res = await apiCall('sandbox_sql', { db: currentDb, sql, dry_run: dryRun });
                 const r = res.result;
 
-                let warningHtml = '';
-                if (r.missing_where_warning) {
-                    warningHtml = `
-                        <div class="p-3 rounded-lg bg-red-950/80 border border-red-500/60 text-red-200 font-bold flex items-center gap-2">
-                            <span>&#128680;</span>
-                            <span>DANGER ALERT: This UPDATE/DELETE query has NO <code class="text-white">WHERE</code> clause and will hit ${r.affected_rows} row(s)!</span>
-                        </div>
-                    `;
-                }
+                const warn = r.missing_where_warning
+                    ? `<div class="p-3 rounded-lg bg-red-950/80 border border-red-500/60 text-red-200 font-bold">&#128680; WARNING: No WHERE clause detected! This will affect ${r.affected_rows} row(s).</div>`
+                    : '';
 
                 let diffHtml = '';
                 if (r.diff_preview && r.diff_preview.length > 0) {
-                    const diffRows = r.diff_preview.map(item => {
-                        const oldObj = item.old_data || {};
-                        const newObj = item.new_data || {};
+                    const rows = r.diff_preview.map(item => {
+                        const o = item.old_data || {}, n = item.new_data || {};
                         if (item.event_type === 'DELETE') {
-                            const badges = Object.entries(oldObj).map(([k, v]) =>
-                                `<span class="inline-flex px-2 py-0.5 rounded bg-rose-950/70 border border-rose-500/30 text-[11px] mr-1.5 mb-1 font-mono">
-                                    <span class="text-slate-400 mr-1">${escapeHtml(k)}:</span>
-                                    <span class="line-through text-rose-300">${escapeHtml(v)}</span>
-                                </span>`
-                            ).join('');
-                            return `<div class="py-1.5 border-b border-slate-800/80 last:border-none"><span class="text-rose-400 font-bold font-mono mr-2">[WILL DELETE PK ${escapeHtml(item.pk_value)}]</span>${badges}</div>`;
+                            return `<tr class="border-t border-slate-800"><td class="py-1.5 pr-3 text-rose-400 font-bold">WILL DELETE</td><td class="py-1.5 pr-3 font-mono text-cyan-400">#${escapeHtml(item.pk_value)}</td><td class="py-1.5 font-mono text-rose-300">${escapeHtml(JSON.stringify(o))}</td></tr>`;
                         }
-
-                        const changes = [];
-                        for (const k of Object.keys(oldObj)) {
-                            if (String(oldObj[k]) !== String(newObj[k])) {
-                                changes.push(`
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded bg-amber-950/60 border border-amber-500/30 text-[11px] mr-2 mb-1 font-mono">
-                                        <span class="text-slate-300 mr-1 font-sans font-semibold">${escapeHtml(k)}:</span>
-                                        <span class="line-through text-rose-400 mr-1">${escapeHtml(oldObj[k])}</span>
-                                        <span class="text-slate-400 mr-1">&rarr;</span>
-                                        <span class="text-emerald-400 font-bold">${escapeHtml(newObj[k])}</span>
-                                    </span>
-                                `);
-                            }
-                        }
-                        return `<div class="py-1.5 border-b border-slate-800/80 last:border-none"><span class="text-cyan-400 font-bold font-mono mr-2">[Row PK ${escapeHtml(item.pk_value)}]</span>${changes.join('') || '<span class="text-slate-500">No column values changed</span>'}</div>`;
+                        const ch = Object.keys(o).filter(k => String(o[k]) !== String(n[k])).map(k => `<span class="mr-2"><strong>${escapeHtml(k)}:</strong> <span class="line-through text-rose-400">${escapeHtml(o[k])}</span> &rarr; <span class="text-emerald-400">${escapeHtml(n[k])}</span></span>`).join('');
+                        return `<tr class="border-t border-slate-800"><td class="py-1.5 pr-3 text-amber-300 font-bold">WILL EDIT</td><td class="py-1.5 pr-3 font-mono text-cyan-400">#${escapeHtml(item.pk_value)}</td><td class="py-1.5 font-mono">${ch || 'Unchanged'}</td></tr>`;
                     }).join('');
-
-                    diffHtml = `
-                        <div class="mt-2">
-                            <div class="text-xs font-semibold text-slate-300 mb-1.5">Exact Row-by-Row Diff Preview (${r.diff_preview.length} row${r.diff_preview.length > 1 ? 's' : ''} shown):</div>
-                            <div class="p-3 rounded-lg bg-slate-900 border border-slate-800 max-h-64 overflow-y-auto">
-                                ${diffRows}
-                            </div>
-                        </div>
-                    `;
+                    diffHtml = `<table class="w-full text-left border-collapse mt-2"><thead><tr class="text-[11px] text-slate-500 uppercase"><th class="pb-1 pr-3">Action</th><th class="pb-1 pr-3">Row ID</th><th class="pb-1">Changes</th></tr></thead><tbody>${rows}</tbody></table>`;
                 }
 
-                box.innerHTML = `
-                    ${warningHtml}
-                    <div class="text-emerald-400 font-bold">[${escapeHtml(r.mode)}] ${escapeHtml(r.message)}</div>
-                    ${diffHtml}
-                    ${r.rows && r.rows.length > 0 ? `<pre class="mt-2 p-3 rounded bg-slate-900 text-slate-300 overflow-x-auto">${escapeHtml(JSON.stringify(r.rows, null, 2))}</pre>` : ''}
-                `;
+                box.innerHTML = `${warn}<div class="text-emerald-400 font-bold">${escapeHtml(r.message)}</div>${diffHtml}` +
+                    (r.rows && r.rows.length > 0 ? `<pre class="mt-2 p-3 rounded bg-slate-900 text-slate-300 overflow-x-auto">${escapeHtml(JSON.stringify(r.rows, null, 2))}</pre>` : '');
 
                 if (!dryRun) {
                     showToast(r.message);
@@ -1214,29 +1230,100 @@ if (isset($_GET['action'])) {
             }
         }
 
+        // Rewind Time Modal
+        function formatLocalSqlTime(d) {
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        }
+
+        function openRewindModal() {
+            document.getElementById('rewindModal').classList.remove('hidden');
+            document.getElementById('rewindModal').classList.add('flex');
+            if (!document.getElementById('pitrTimestampInput').value) {
+                setPitrMinutesAgo(10);
+            }
+        }
+        function openRewindModalAt(ts, tableName) {
+            openRewindModal();
+            document.getElementById('pitrTimestampInput').value = ts;
+            document.getElementById('pitrTableSelect').value = tableName || '';
+            runPitr(true);
+        }
+        function closeRewindModal() {
+            document.getElementById('rewindModal').classList.add('hidden');
+            document.getElementById('rewindModal').classList.remove('flex');
+        }
+        function setPitrMinutesAgo(mins) {
+            document.getElementById('pitrTimestampInput').value = formatLocalSqlTime(new Date(Date.now() - mins * 60000));
+            runPitr(true);
+        }
+
+        async function runPitr(previewOnly) {
+            const targetTime = document.getElementById('pitrTimestampInput').value.trim();
+            const table = document.getElementById('pitrTableSelect').value;
+            const box = document.getElementById('pitrResultBox');
+            box.classList.remove('hidden');
+            box.innerHTML = `<div class="text-slate-400">Checking changes...</div>`;
+
+            try {
+                if (previewOnly) {
+                    const res = await apiCall('pitr_preview', { db: currentDb, target_time: targetTime, table });
+                    const p = res.preview;
+                    if (!p.batches || p.batches.length === 0) {
+                        box.innerHTML = `<div class="text-emerald-400 font-semibold">&#10003; No changes happened after ${escapeHtml(p.target_timestamp)}.</div>`;
+                        return;
+                    }
+                    box.innerHTML = `
+                        <div class="text-indigo-300 font-bold mb-2">Will undo ${p.batches_to_undo} change batch(es) (${p.total_events_to_undo} rows) made after ${escapeHtml(p.target_timestamp)}:</div>
+                        ${p.batches.map(b => `<div class="flex justify-between py-1 border-t border-slate-800/80"><span><strong class="text-white">${escapeHtml(b.event_type)}</strong> on <code class="text-cyan-400">${escapeHtml(b.table_name)}</code> (${b.affected_rows} rows)</span><span class="font-mono text-slate-400">${escapeHtml(b.executed_at.substring(0, 19))}</span></div>`).join('')}
+                    `;
+                } else {
+                    const res = await apiCall('pitr_execute', { db: currentDb, target_time: targetTime, table });
+                    showToast(res.pitr.message);
+                    closeRewindModal();
+                    await onDatabaseChange(currentDb);
+                }
+            } catch (err) {
+                box.innerHTML = `<div class="text-rose-400 font-bold">${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        // Settings Drawer & Binlog
+        function openSettingsDrawer() {
+            document.getElementById('settingsDrawer').classList.remove('hidden');
+            document.getElementById('settingsDrawer').classList.add('flex');
+        }
+        function closeSettingsDrawer() {
+            document.getElementById('settingsDrawer').classList.add('hidden');
+            document.getElementById('settingsDrawer').classList.remove('flex');
+        }
+
+        async function saveConnection() {
+            try {
+                const data = await apiCall('save_connection', {
+                    host: document.getElementById('connHost').value,
+                    port: document.getElementById('connPort').value,
+                    username: document.getElementById('connUser').value,
+                    password: document.getElementById('connPass').value
+                });
+                populateDatabaseSelect(data.databases);
+                closeSettingsDrawer();
+                showToast('Connected to MySQL server!');
+            } catch (err) {
+                showToast('Connection failed: ' + err.message, 'error');
+            }
+        }
+
         async function loadBinlogStatus() {
             const box = document.getElementById('binlogContent');
+            box.innerHTML = 'Loading...';
             try {
                 const res = await apiCall('binlog_status');
                 const b = res.binlog;
                 box.innerHTML = `
-                    <div class="grid grid-cols-3 gap-3">
-                        <div class="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                            <div class="text-slate-400">Binary Logging (log_bin)</div>
-                            <div class="text-sm font-bold mt-1 ${b.log_bin_enabled ? 'text-emerald-400' : 'text-amber-400'}">${b.log_bin_enabled ? 'ENABLED (ON)' : 'DISABLED'}</div>
-                        </div>
-                        <div class="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                            <div class="text-slate-400">Binlog Format</div>
-                            <div class="text-sm font-bold mt-1 text-white">${escapeHtml(b.binlog_format)}</div>
-                        </div>
-                        <div class="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                            <div class="text-slate-400">Binlog Row Image</div>
-                            <div class="text-sm font-bold mt-1 text-white">${escapeHtml(b.binlog_row_image)}</div>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <div class="font-semibold text-white mb-2">Recent Binary Log Events (${(b.recent_events || []).length})</div>
-                        <pre class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-300 overflow-x-auto max-h-96">${escapeHtml(JSON.stringify(b.recent_events || [], null, 2))}</pre>
+                    <div class="space-y-2">
+                        <div>Status: <strong class="${b.log_bin_enabled ? 'text-emerald-400' : 'text-amber-400'}">${b.log_bin_enabled ? 'ON' : 'OFF'}</strong> &bull; Format: <strong class="text-white">${escapeHtml(b.binlog_format)}</strong></div>
+                        <pre class="p-2 rounded bg-slate-900 text-[10px] text-slate-300 overflow-x-auto max-h-48">${escapeHtml(JSON.stringify(b.recent_events || [], null, 2))}</pre>
                     </div>
                 `;
             } catch (err) {
@@ -1244,39 +1331,7 @@ if (isset($_GET['action'])) {
             }
         }
 
-        function openConnectionModal() {
-            document.getElementById('connModal').classList.remove('hidden');
-            document.getElementById('connModal').classList.add('flex');
-        }
-        function closeConnectionModal() {
-            document.getElementById('connModal').classList.add('hidden');
-            document.getElementById('connModal').classList.remove('flex');
-        }
-
-        async function saveConnection() {
-            try {
-                const host = document.getElementById('connHost').value;
-                const port = document.getElementById('connPort').value;
-                const username = document.getElementById('connUser').value;
-                const password = document.getElementById('connPass').value;
-
-                const data = await apiCall('save_connection', { host, port, username, password });
-                closeConnectionModal();
-                document.getElementById('connBtnLabel').textContent = `${host}:${port} (${username})`;
-                populateDatabaseSelect(data.databases);
-                showToast('Connected to MySQL server successfully!');
-            } catch (err) {
-                showToast('Connection failed: ' + err.message, 'error');
-            }
-        }
-
-        async function refreshAll() {
-            const data = await apiCall('status');
-            populateDatabaseSelect(data.databases, currentDb);
-        }
-
         window.addEventListener('DOMContentLoaded', initApp);
     </script>
 </body>
 </html>
-
