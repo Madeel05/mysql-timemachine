@@ -779,6 +779,267 @@ class TimeMachineEngine
     }
 
     /**
+     * Phase 2 — Server-side Searchable History across all stored SQLite timeline events.
+     * Searches across table_name, pk_value, old_data, new_data, and event_type.
+     */
+    public function searchTimeline(
+        ?string $dbName = null,
+        ?string $query = null,
+        ?string $eventType = null,
+        ?string $tableName = null,
+        int $limit = 100
+    ): array {
+        $this->syncVault($dbName);
+
+        $where = [];
+        $params = [];
+
+        if ($dbName) {
+            $where[] = "db_name = :db";
+            $params[':db'] = $dbName;
+        }
+        if ($tableName) {
+            $where[] = "table_name = :tbl";
+            $params[':tbl'] = $tableName;
+        }
+
+        $etype = strtoupper(trim((string) $eventType));
+        if ($etype === 'DELETE' || $etype === 'UPDATE') {
+            $where[] = "event_type = :etype";
+            $params[':etype'] = $etype;
+        } elseif ($etype === 'DDL') {
+            $where[] = "event_type IN ('DROP_TABLE', 'TRUNCATE_TABLE')";
+        }
+
+        $q = trim((string) $query);
+        if ($q !== '') {
+            $where[] = "(table_name LIKE :q OR pk_value LIKE :q OR old_data LIKE :q OR new_data LIKE :q OR event_type LIKE :q)";
+            $params[':q'] = '%' . $q . '%';
+        }
+
+        $whereSql = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $sql = "
+            SELECT batch_key,
+                   db_name,
+                   table_name,
+                   event_type,
+                   COUNT(*) AS affected_rows,
+                   MIN(id) AS first_id,
+                   MAX(id) AS last_id,
+                   GROUP_CONCAT(pk_value, ', ') AS sample_pks,
+                   MAX(db_user) AS db_user,
+                   MAX(executed_at) AS executed_at,
+                   MAX(restored_at) AS restored_at
+            FROM timeline_events
+            {$whereSql}
+            GROUP BY batch_key
+            ORDER BY MAX(id) DESC
+            LIMIT " . (int) $limit;
+
+        $stmt = $this->vault->prepare($sql);
+        $stmt->execute($params);
+        $batches = $stmt->fetchAll();
+
+        foreach ($batches as &$b) {
+            $itemStmt = $this->vault->prepare("
+                SELECT id, pk_value, old_data, new_data, executed_at, restored_at
+                FROM timeline_events
+                WHERE batch_key = :bkey
+                ORDER BY id ASC
+                LIMIT 25
+            ");
+            $itemStmt->execute([':bkey' => $b['batch_key']]);
+            $items = $itemStmt->fetchAll();
+
+            foreach ($items as &$item) {
+                $item['old_data_parsed'] = $item['old_data'] ? json_decode($item['old_data'], true) : null;
+                $item['new_data_parsed'] = $item['new_data'] ? json_decode($item['new_data'], true) : null;
+                unset($item['old_data'], $item['new_data']);
+            }
+            $b['items'] = $items;
+
+            if (in_array($b['event_type'], ['DROP_TABLE', 'TRUNCATE_TABLE'], true) && !empty($items[0]['old_data_parsed'])) {
+                $b['affected_rows'] = (int) ($items[0]['old_data_parsed']['row_count'] ?? 0);
+            }
+        }
+
+        return $batches;
+    }
+
+    /**
+     * Phase 2 — Generates an exact, executable .sql recovery script for any event batch or single row.
+     */
+    public function generateUndoSql(string $batchKey, ?int $singleEventId = null): array
+    {
+        if ($singleEventId !== null) {
+            $stmt = $this->vault->prepare("SELECT * FROM timeline_events WHERE id = :id");
+            $stmt->execute([':id' => $singleEventId]);
+        } else {
+            $stmt = $this->vault->prepare("SELECT * FROM timeline_events WHERE batch_key = :bkey ORDER BY id DESC");
+            $stmt->execute([':bkey' => $batchKey]);
+        }
+
+        $events = $stmt->fetchAll();
+        if (empty($events)) {
+            throw new Exception("No matching event found in the TimeMachine Vault.");
+        }
+
+        $first = $events[0];
+        $dbName = $first['db_name'];
+        $tableName = $first['table_name'];
+        $eventType = $first['event_type'];
+        $executedAt = $first['executed_at'];
+
+        $safeDb = $this->quoteIdent($dbName);
+        $safeTbl = $this->quoteIdent($tableName);
+
+        $metaStmt = $this->vault->prepare("SELECT * FROM protected_tables WHERE db_name = :db AND table_name = :tbl");
+        $metaStmt->execute([':db' => $dbName, ':tbl' => $tableName]);
+        $meta = $metaStmt->fetch();
+        $pks = $meta ? (json_decode($meta['primary_keys'], true) ?: ['id']) : ['id'];
+
+        $lines = [
+            "-- MySQL TimeMachine Recovery Script",
+            "-- Database: {$dbName}",
+            "-- Table: {$tableName}",
+            "-- Undoing Event: {$eventType} (recorded at {$executedAt})",
+            "-- Generated at: " . date('Y-m-d H:i:s'),
+            "",
+            "USE {$safeDb};",
+            "SET FOREIGN_KEY_CHECKS = 0;",
+            "SET @TM_BYPASS_TRIGGER = 1;",
+            "",
+        ];
+
+        $rowCount = 0;
+
+        if ($eventType === 'DROP_TABLE') {
+            $payload = json_decode($first['old_data'], true);
+            $createDdl = $payload['create_ddl'] ?? ($meta['create_ddl'] ?? '');
+            if ($createDdl !== '') {
+                $lines[] = rtrim($createDdl, ';') . ';';
+                $lines[] = "";
+            }
+            $rows = $payload['rows'] ?? [];
+            foreach ($rows as $row) {
+                $lines[] = $this->buildInsertSqlLiteral($dbName, $tableName, $row);
+                $rowCount++;
+            }
+        } elseif ($eventType === 'TRUNCATE_TABLE') {
+            $payload = json_decode($first['old_data'], true);
+            $rows = $payload['rows'] ?? [];
+            foreach ($rows as $row) {
+                $lines[] = $this->buildInsertSqlLiteral($dbName, $tableName, $row);
+                $rowCount++;
+            }
+        } elseif ($eventType === 'DELETE') {
+            foreach ($events as $ev) {
+                $oldRow = json_decode($ev['old_data'], true);
+                if (is_array($oldRow) && !empty($oldRow)) {
+                    $lines[] = $this->buildInsertSqlLiteral($dbName, $tableName, $oldRow);
+                    $rowCount++;
+                }
+            }
+        } elseif ($eventType === 'UPDATE') {
+            foreach ($events as $ev) {
+                $oldRow = json_decode($ev['old_data'], true);
+                $newRow = json_decode($ev['new_data'], true);
+                if (is_array($oldRow) && !empty($oldRow)) {
+                    $lines[] = $this->buildUpdateSqlLiteral($dbName, $tableName, $oldRow, $newRow, $pks);
+                    $rowCount++;
+                }
+            }
+        }
+
+        $lines[] = "";
+        $lines[] = "SET @TM_BYPASS_TRIGGER = NULL;";
+        $lines[] = "SET FOREIGN_KEY_CHECKS = 1;";
+        $lines[] = "";
+
+        $safeFileTable = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $tableName);
+        $safeTs = preg_replace('/[^0-9]/', '', substr($executedAt, 0, 19));
+        $filename = "undo_{$safeFileTable}_{$safeTs}.sql";
+
+        return [
+            'filename' => $filename,
+            'db_name' => $dbName,
+            'table_name' => $tableName,
+            'event_type' => $eventType,
+            'row_count' => $rowCount,
+            'sql' => implode("\n", $lines),
+        ];
+    }
+
+    private function quoteSqlValue($val): string
+    {
+        if ($val === null) {
+            return 'NULL';
+        }
+        if (is_bool($val)) {
+            return $val ? '1' : '0';
+        }
+        if (is_int($val) || is_float($val)) {
+            return (string) $val;
+        }
+        return $this->mysql->quote((string) $val);
+    }
+
+    private function buildInsertSqlLiteral(string $dbName, string $tableName, array $row): string
+    {
+        $safeDb = $this->quoteIdent($dbName);
+        $safeTbl = $this->quoteIdent($tableName);
+
+        $cols = [];
+        $vals = [];
+        $updates = [];
+
+        foreach ($row as $col => $val) {
+            $qCol = $this->quoteIdent($col);
+            $cols[] = $qCol;
+            $vals[] = $this->quoteSqlValue($val);
+            $updates[] = "{$qCol} = VALUES({$qCol})";
+        }
+
+        return sprintf(
+            "INSERT INTO %s.%s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s;",
+            $safeDb,
+            $safeTbl,
+            implode(', ', $cols),
+            implode(', ', $vals),
+            implode(', ', $updates)
+        );
+    }
+
+    private function buildUpdateSqlLiteral(string $dbName, string $tableName, array $oldRow, ?array $newRow, array $pks): string
+    {
+        $safeDb = $this->quoteIdent($dbName);
+        $safeTbl = $this->quoteIdent($tableName);
+
+        $setClauses = [];
+        foreach ($oldRow as $col => $val) {
+            $setClauses[] = $this->quoteIdent($col) . ' = ' . $this->quoteSqlValue($val);
+        }
+
+        $whereClauses = [];
+        foreach ($pks as $pk) {
+            $qPk = $this->quoteIdent($pk);
+            $matchVal = $newRow[$pk] ?? ($oldRow[$pk] ?? null);
+            $whereClauses[] = $matchVal === null
+                ? "{$qPk} IS NULL"
+                : "{$qPk} = " . $this->quoteSqlValue($matchVal);
+        }
+
+        return sprintf(
+            "UPDATE %s.%s SET %s WHERE %s LIMIT 1;",
+            $safeDb,
+            $safeTbl,
+            implode(', ', $setClauses),
+            implode(' AND ', $whereClauses)
+        );
+    }
+
+    /**
      * 1-Click Undo / Restore an entire Batch (or a single row within a batch)!
      * Handles:
      * - DELETE -> Re-inserts the deleted row(s) with exact values.

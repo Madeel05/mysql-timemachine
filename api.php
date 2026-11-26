@@ -169,6 +169,36 @@ try {
             echo json_encode(['ok' => true, 'pitr' => $res]);
             break;
 
+        case 'search_timeline':
+            $db = $input['db'] ?? ($_GET['db'] ?? null);
+            $q = $input['q'] ?? ($_GET['q'] ?? '');
+            $eventType = $input['event_type'] ?? ($_GET['event_type'] ?? 'ALL');
+            $table = !empty($input['table']) ? $input['table'] : (!empty($_GET['table']) ? $_GET['table'] : null);
+            $limit = isset($input['limit']) ? (int) $input['limit'] : 100;
+            $results = $engine->searchTimeline($db ?: null, $q, $eventType, $table, $limit);
+            echo json_encode([
+                'ok' => true,
+                'query' => $q,
+                'event_type' => $eventType,
+                'timeline' => $results,
+            ]);
+            break;
+
+        case 'export_undo_sql':
+            $batchKey = $input['batch_key'] ?? ($_GET['batch_key'] ?? '');
+            $singleId = isset($input['event_id']) && $input['event_id'] !== '' ? (int) $input['event_id']
+                : (isset($_GET['event_id']) && $_GET['event_id'] !== '' ? (int) $_GET['event_id'] : null);
+            $download = !empty($_GET['download']) || !empty($input['download']);
+            $res = $engine->generateUndoSql($batchKey, $singleId);
+            if ($download) {
+                header('Content-Type: application/sql; charset=utf-8');
+                header('Content-Disposition: attachment; filename="' . $res['filename'] . '"');
+                echo $res['sql'];
+                exit;
+            }
+            echo json_encode(['ok' => true, 'export' => $res]);
+            break;
+
         default:
             throw new Exception("Unknown API action: {$action}");
     }
