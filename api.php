@@ -19,14 +19,62 @@ try {
             (int) ($input['port'] ?? 3306),
             trim($input['username'] ?? 'root'),
             (string) ($input['password'] ?? ''),
-            trim($input['name'] ?? 'Laragon MySQL')
+            trim($input['name'] ?? '')
         );
-        // Verify connection works
         $engine = new TimeMachineEngine();
         echo json_encode([
             'ok' => true,
             'connection' => $cfg,
+            'connections' => Config::listConnections(),
             'databases' => $engine->listDatabases(),
+        ]);
+        exit;
+    }
+
+    if ($action === 'switch_connection') {
+        $id = (int) ($input['id'] ?? 0);
+        $cfg = Config::activateConnection($id);
+        $engine = new TimeMachineEngine();
+        echo json_encode([
+            'ok' => true,
+            'connection' => $cfg,
+            'connections' => Config::listConnections(),
+            'databases' => $engine->listDatabases(),
+        ]);
+        exit;
+    }
+
+    if ($action === 'delete_connection') {
+        $id = (int) ($input['id'] ?? 0);
+        Config::deleteConnection($id);
+        $engine = new TimeMachineEngine();
+        echo json_encode([
+            'ok' => true,
+            'connection' => Config::getActiveConnectionConfig(),
+            'connections' => Config::listConnections(),
+            'databases' => $engine->listDatabases(),
+        ]);
+        exit;
+    }
+
+    if ($action === 'watcher_status') {
+        echo json_encode([
+            'ok' => true,
+            'watcher' => Config::getWatcherStatus(),
+        ]);
+        exit;
+    }
+
+    if ($action === 'save_retention') {
+        $days = (int) ($input['days'] ?? 30);
+        $saved = Config::setRetentionDays($days);
+        $engine = new TimeMachineEngine();
+        $purged = $saved > 0 ? $engine->autoPurgeOldHistory($saved) : 0;
+        echo json_encode([
+            'ok' => true,
+            'retention_days' => $saved,
+            'purged_events' => $purged,
+            'vault_size_kb' => Config::getVaultStorageKb(),
         ]);
         exit;
     }
@@ -44,6 +92,10 @@ try {
             echo json_encode([
                 'ok' => true,
                 'connection' => Config::getActiveConnectionConfig(),
+                'connections' => Config::listConnections(),
+                'watcher' => Config::getWatcherStatus(),
+                'retention_days' => Config::getRetentionDays(),
+                'vault_size_kb' => Config::getVaultStorageKb(),
                 'databases' => $databases,
                 'stats' => [
                     'total_events' => $totalEvents,
@@ -65,6 +117,8 @@ try {
                 'db' => $db,
                 'tables' => $tables,
                 'timeline' => $timeline,
+                'vault_size_kb' => Config::getVaultStorageKb(),
+                'retention_days' => Config::getRetentionDays(),
             ]);
             break;
 
@@ -98,6 +152,8 @@ try {
                 'sync' => $syncRes,
                 'tables' => $tables,
                 'timeline' => $timeline,
+                'vault_size_kb' => Config::getVaultStorageKb(),
+                'retention_days' => Config::getRetentionDays(),
             ]);
             break;
 

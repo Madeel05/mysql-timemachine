@@ -3,6 +3,7 @@
 /storage/*.sqlite-shm
 /storage/*.sqlite-wal
 /storage/snapshots/
+/storage/watcher.heartbeat
 
 # OS / Editor files
 .DS_Store

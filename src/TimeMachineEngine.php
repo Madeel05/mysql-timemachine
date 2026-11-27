@@ -426,40 +426,39 @@ class TimeMachineEngine
     {
         $auditDb = $this->quoteIdent(self::AUDIT_DB);
 
-        // 1. Pull new row_events from MySQL buffer into SQLite timeline_events
-        $lastId = (int) $this->vault->query("SELECT COALESCE(MAX(mysql_event_id), 0) FROM timeline_events")->fetchColumn();
-
-        $stmt = $this->mysql->prepare("
+        // 1. Drain new row_events from MySQL inbox buffer into SQLite timeline_events
+        $newEvents = $this->mysql->query("
             SELECT * FROM {$auditDb}.`row_events`
-            WHERE `id` > :last_id
             ORDER BY `id` ASC
             LIMIT 2500
-        ");
-        $stmt->execute([':last_id' => $lastId]);
-        $newEvents = $stmt->fetchAll();
+        ")->fetchAll();
 
         $newDeleteCountByTable = [];
         $insertedEvents = 0;
 
         if (!empty($newEvents)) {
+            $maxFetchedId = 0;
             $this->vault->beginTransaction();
             $ins = $this->vault->prepare("
-                INSERT OR IGNORE INTO timeline_events (
+                INSERT INTO timeline_events (
                     mysql_event_id, batch_key, db_name, table_name, event_type,
                     pk_value, old_data, new_data, connection_id, db_user, executed_at
                 ) VALUES (
-                    :mid, :bkey, :db, :tbl, :etype,
+                    NULL, :bkey, :db, :tbl, :etype,
                     :pk, :old, :new, :cid, :user, :exec_at
                 )
             ");
 
             foreach ($newEvents as $ev) {
+                $evId = (int) $ev['id'];
+                if ($evId > $maxFetchedId) {
+                    $maxFetchedId = $evId;
+                }
                 // Group multi-row queries executed in the same second on the same connection & table into one Batch
                 $secTimestamp = substr($ev['executed_at'], 0, 19);
                 $batchKey = md5($ev['db_name'] . '|' . $ev['table_name'] . '|' . $ev['event_type'] . '|' . $ev['connection_id'] . '|' . $secTimestamp);
 
                 $ins->execute([
-                    ':mid' => $ev['id'],
                     ':bkey' => $batchKey,
                     ':db' => $ev['db_name'],
                     ':tbl' => $ev['table_name'],
@@ -479,6 +478,10 @@ class TimeMachineEngine
                 }
             }
             $this->vault->commit();
+
+            // Remove drained events from MySQL inbox so they never re-import and MySQL stays lean
+            $delStmt = $this->mysql->prepare("DELETE FROM {$auditDb}.`row_events` WHERE `id` <= :max_id");
+            $delStmt->execute([':max_id' => $maxFetchedId]);
         }
 
         // 2. Check protected tables for DROP TABLE, TRUNCATE TABLE, or schema/row changes
@@ -621,20 +624,25 @@ class TimeMachineEngine
             }
         }
 
-        // 3. Auto-clean history older than 30 days
-        $autoPurged = $this->autoPurgeOldHistory(30);
+        // 3. Auto-clean history based on configured retention policy (0 = keep forever)
+        $retentionDays = Config::getRetentionDays();
+        $autoPurged = $retentionDays > 0 ? $this->autoPurgeOldHistory($retentionDays) : 0;
 
         return [
             'new_events_synced' => $insertedEvents,
             'auto_purged_events' => $autoPurged,
+            'retention_days' => $retentionDays,
         ];
     }
 
     /**
-     * Automatically purges history older than $days (default 30 days) from both SQLite Vault and MySQL buffer.
+     * Automatically purges history older than $days from both SQLite Vault and MySQL buffer.
      */
     public function autoPurgeOldHistory(int $days = 30): int
     {
+        if ($days <= 0) {
+            return 0;
+        }
         $auditDb = $this->quoteIdent(self::AUDIT_DB);
         $cutoff = date('Y-m-d H:i:s', strtotime("-{$days} days"));
 
@@ -689,8 +697,13 @@ class TimeMachineEngine
             }
         }
 
-        // Always truncate the MySQL buffer after syncing so cleared events never re-import
-        $this->mysql->exec("TRUNCATE TABLE {$auditDb}.`row_events`");
+        // Delete any remaining buffered rows for the cleared DB (never TRUNCATE so AUTO_INCREMENT stays intact)
+        if ($dbName) {
+            $mDel = $this->mysql->prepare("DELETE FROM {$auditDb}.`row_events` WHERE `db_name` = :db");
+            $mDel->execute([':db' => $dbName]);
+        } else {
+            $this->mysql->exec("DELETE FROM {$auditDb}.`row_events`");
+        }
 
         // Reclaim SQLite disk space immediately
         try {

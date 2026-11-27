@@ -455,9 +455,22 @@ if (isset($_GET['action'])) {
                 </div>
             </div>
 
-            <!-- Connection -->
+            <!-- Saved Server Profiles -->
+            <div class="space-y-2.5 pt-4 hairline-t">
+                <div class="flex items-center justify-between">
+                    <h4 class="text-[13px] font-medium text-ink-secondary">Server profiles</h4>
+                    <span id="profileCountMeta" class="font-mono text-[11px] text-ink-muted tabular">1 saved</span>
+                </div>
+                <div id="serverProfilesList" class="space-y-1.5"></div>
+            </div>
+
+            <!-- Add New Server Profile -->
             <form onsubmit="event.preventDefault(); saveConnection();" class="space-y-3 pt-4 hairline-t">
-                <h4 class="text-[13px] font-medium text-ink-secondary">MySQL server</h4>
+                <h4 class="text-[13px] font-medium text-ink-secondary">Add server profile</h4>
+                <div>
+                    <label for="connName" class="block text-[12px] text-ink-muted mb-1">Profile name</label>
+                    <input id="connName" type="text" value="" placeholder="Staging VPS or Local Laragon" class="w-full h-9 bg-well hairline rounded-lg px-3 text-[13px] text-ink-primary placeholder-ink-muted focus-ring">
+                </div>
                 <div class="grid grid-cols-3 gap-2">
                     <div class="col-span-2">
                         <label for="connHost" class="block text-[12px] text-ink-muted mb-1">Host</label>
@@ -479,9 +492,46 @@ if (isset($_GET['action'])) {
                     </div>
                 </div>
                 <button type="submit" class="w-full h-9 rounded-lg btn-primary text-[13px] font-medium focus-ring">
-                    Save connection
+                    Test &amp; save profile
                 </button>
             </form>
+
+            <!-- Retention Policy & Desktop Alerts -->
+            <div class="space-y-3 pt-4 hairline-t">
+                <h4 class="text-[13px] font-medium text-ink-secondary">Retention &amp; alerts</h4>
+                <div class="space-y-1.5">
+                    <label for="retentionSelect" class="block text-[12px] text-ink-muted">Auto-clean history</label>
+                    <div class="flex items-center gap-2">
+                        <select id="retentionSelect" class="flex-1 h-9 bg-well hairline rounded-lg px-3 text-[13px] text-ink-primary focus-ring">
+                            <option value="7">Older than 7 days</option>
+                            <option value="30">Older than 30 days</option>
+                            <option value="90">Older than 90 days</option>
+                            <option value="0">Keep forever</option>
+                        </select>
+                        <button onclick="saveRetentionPolicy()" class="h-9 px-3.5 rounded-lg btn-surface text-[12px] font-medium text-ink-primary focus-ring">Save</button>
+                    </div>
+                </div>
+                <div class="p-3 rounded-lg bg-well hairline flex items-center justify-between gap-3">
+                    <div>
+                        <div class="text-[13px] font-medium text-ink-primary">Desktop alerts</div>
+                        <div class="text-[11px] text-ink-muted">Notify on dropped table or mass delete (&ge;20 rows)</div>
+                    </div>
+                    <button id="desktopAlertsToggle" onclick="toggleDesktopAlerts()" class="h-7 px-3 rounded-md btn-surface text-[12px] font-medium text-ink-secondary focus-ring shrink-0">
+                        Enable
+                    </button>
+                </div>
+            </div>
+
+            <!-- Background Watcher -->
+            <div class="space-y-2.5 pt-4 hairline-t">
+                <div class="flex items-center justify-between">
+                    <h4 class="text-[13px] font-medium text-ink-secondary">Background watcher</h4>
+                    <button onclick="refreshWatcherStatus()" class="text-[12px] font-medium text-ink-primary hover:underline focus-ring rounded">Refresh</button>
+                </div>
+                <div id="watcherStatusBox" class="p-3.5 rounded-lg bg-well hairline space-y-2 text-[12px]">
+                    <div class="text-ink-muted">Checking watcher heartbeat</div>
+                </div>
+            </div>
 
             <!-- Binary Logs -->
             <div class="space-y-3 pt-4 hairline-t">
@@ -507,6 +557,10 @@ if (isset($_GET['action'])) {
         let lastRenderSignature = '';
         let historySearchTimer = null;
         let isServerSearchActive = false;
+        let currentVaultSizeKb = 0;
+        let currentRetentionDays = 30;
+        let knownAlertBatchKeys = new Set();
+        let desktopAlertsEnabled = localStorage.getItem('tm_desktop_alerts') === '1';
 
         // Lucide 16px stroke-1.5 SVG helper
         function svgIcon(name, cls = 'text-ink-muted') {
@@ -570,6 +624,13 @@ if (isset($_GET['action'])) {
                 document.getElementById('connHost').value = conn.host;
                 document.getElementById('connPort').value = conn.port;
                 document.getElementById('connUser').value = conn.username;
+                renderServerProfiles(data.connections || []);
+                renderWatcherStatus(data.watcher || {});
+                currentRetentionDays = Number(data.retention_days ?? 30);
+                currentVaultSizeKb = Number(data.vault_size_kb ?? 0);
+                const retSel = document.getElementById('retentionSelect');
+                if (retSel) retSel.value = String(currentRetentionDays);
+                updateDesktopAlertsButton();
                 populateDatabaseSelect(data.databases);
             } catch (err) {
                 showToast('MySQL connection error: ' + err.message, 'error');
@@ -582,11 +643,14 @@ if (isset($_GET['action'])) {
                     const syncData = await apiCall('sync', { db: currentDb });
                     const newTables = syncData.tables || [];
                     const newTimeline = syncData.timeline || [];
+                    if (syncData.vault_size_kb !== undefined) currentVaultSizeKb = Number(syncData.vault_size_kb);
+                    if (syncData.retention_days !== undefined) currentRetentionDays = Number(syncData.retention_days);
                     const sig = JSON.stringify({ t: newTables, l: newTimeline });
 
                     if (syncData.sync && syncData.sync.new_events_synced > 0) {
                         showToast(`Recorded ${syncData.sync.new_events_synced} new change(s)`);
                     }
+                    checkDestructiveAlerts(newTimeline);
                     if (!isServerSearchActive && sig !== lastRenderSignature) {
                         lastRenderSignature = sig;
                         currentTables = newTables;
@@ -639,6 +703,10 @@ if (isset($_GET['action'])) {
                 const data = await apiCall('overview', { db: dbName });
                 currentTables = data.tables || [];
                 currentTimeline = data.timeline || [];
+                if (data.vault_size_kb !== undefined) currentVaultSizeKb = Number(data.vault_size_kb);
+                if (data.retention_days !== undefined) currentRetentionDays = Number(data.retention_days);
+                // Seed known batches so initial load doesn't spam desktop notifications
+                currentTimeline.forEach(b => knownAlertBatchKeys.add(b.batch_key));
                 lastRenderSignature = JSON.stringify({ t: currentTables, l: currentTimeline });
                 updatePitrTableDropdown();
                 updateDashboardUI();
@@ -665,7 +733,8 @@ if (isset($_GET['action'])) {
                 : (protectedCount === 0 ? 'Protection is off' : `${total - protectedCount} unprotected`);
 
             document.getElementById('statEventsText').textContent = `${currentTimeline.length}`;
-            document.getElementById('statEventsSub').textContent = `${unrestoredCount} active · 30-day retention`;
+            const retLabel = currentRetentionDays === 0 ? 'Keep forever' : `${currentRetentionDays}d retention`;
+            document.getElementById('statEventsSub').textContent = `${unrestoredCount} active · ${currentVaultSizeKb} KB · ${retLabel}`;
 
             const onboarding = document.getElementById('onboardingCard');
             document.getElementById('onboardingDbName').textContent = currentDb;
@@ -927,13 +996,15 @@ if (isset($_GET['action'])) {
             }
 
             if (batch.event_type === 'UPDATE') {
-                const rowsHtml = [];
+                const changedRowsHtml = [];
+                const unchangedRowsHtml = [];
                 items.slice(0, 10).forEach(item => {
                     const oldObj = item.old_data_parsed || {};
                     const newObj = item.new_data_parsed || {};
                     Object.keys(oldObj).forEach(col => {
-                        if (String(oldObj[col]) !== String(newObj[col])) {
-                            rowsHtml.push(`
+                        const isChanged = String(oldObj[col]) !== String(newObj[col]);
+                        if (isChanged) {
+                            changedRowsHtml.push(`
                                 <tr class="hover:bg-white/[0.02]">
                                     <td class="py-1.5 pr-4 font-mono text-ink-muted tabular"><span class="keycap">#${escapeHtml(item.pk_value)}</span></td>
                                     <td class="py-1.5 pr-4 font-mono text-ink-primary">${escapeHtml(col)}</td>
@@ -942,9 +1013,23 @@ if (isset($_GET['action'])) {
                                     ${batch.affected_rows > 1 ? `<td class="py-1.5 text-right"><button onclick="restoreSingleRow('${escapeHtml(batch.batch_key)}', ${item.id})" class="h-6 px-2 rounded btn-surface text-[11px] text-ink-secondary hover:text-ink-primary">Undo row</button></td>` : ''}
                                 </tr>
                             `);
+                        } else {
+                            unchangedRowsHtml.push(`
+                                <tr class="hidden tm-unchanged-${escapeHtml(batch.batch_key)} text-ink-muted/80">
+                                    <td class="py-1 pr-4 font-mono tabular"><span class="keycap">#${escapeHtml(item.pk_value)}</span></td>
+                                    <td class="py-1 pr-4 font-mono">${escapeHtml(col)}</td>
+                                    <td class="py-1 pr-4 font-mono tabular">${escapeHtml(oldObj[col])}</td>
+                                    <td class="py-1 pr-4 font-mono tabular">${escapeHtml(newObj[col])}</td>
+                                    ${batch.affected_rows > 1 ? `<td></td>` : ''}
+                                </tr>
+                            `);
                         }
                     });
                 });
+
+                const toggleColsBtn = unchangedRowsHtml.length > 0
+                    ? `<button onclick="toggleUnchangedCols('${escapeHtml(batch.batch_key)}', this)" class="mt-2 text-[11px] text-ink-muted hover:text-ink-primary transition-colors duration-150 ease-calm">Show all columns (${unchangedRowsHtml.length} unchanged)</button>`
+                    : '';
 
                 return `
                     <table class="w-full text-left border-collapse text-[12px]">
@@ -957,9 +1042,12 @@ if (isset($_GET['action'])) {
                                 ${batch.affected_rows > 1 ? `<th class="pb-2 text-right font-normal">Action</th>` : ''}
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-white/[0.06]">${rowsHtml.join('')}</tbody>
+                        <tbody class="divide-y divide-white/[0.06]">${changedRowsHtml.join('')}${unchangedRowsHtml.join('')}</tbody>
                     </table>
-                    ${batch.affected_rows > 10 ? `<div class="text-[12px] text-ink-muted mt-2 tabular">Showing 10 of ${batch.affected_rows} rows</div>` : ''}
+                    <div class="flex items-center justify-between flex-wrap gap-2">
+                        ${toggleColsBtn}
+                        ${batch.affected_rows > 10 ? `<div class="text-[12px] text-ink-muted mt-2 tabular">Showing 10 of ${batch.affected_rows} rows</div>` : ''}
+                    </div>
                 `;
             }
 
@@ -1422,27 +1510,192 @@ if (isset($_GET['action'])) {
             }
         }
 
-        // Settings Drawer & Binlog
+        // Settings Drawer, Multi-Server Profiles, Watcher & Binlog
         function openSettingsDrawer() {
             document.getElementById('settingsDrawer').classList.remove('hidden');
             document.getElementById('settingsDrawer').classList.add('flex');
+            refreshWatcherStatus();
         }
         function closeSettingsDrawer() {
             document.getElementById('settingsDrawer').classList.add('hidden');
             document.getElementById('settingsDrawer').classList.remove('flex');
         }
 
+        function renderServerProfiles(profiles) {
+            const list = document.getElementById('serverProfilesList');
+            const meta = document.getElementById('profileCountMeta');
+            if (meta) meta.textContent = `${profiles.length} saved`;
+            if (!list) return;
+
+            if (!profiles.length) {
+                list.innerHTML = `<div class="text-[12px] text-ink-muted">No profiles saved</div>`;
+                return;
+            }
+
+            list.innerHTML = profiles.map(p => {
+                const active = Number(p.is_active) === 1;
+                return `
+                    <div class="p-3 rounded-lg ${active ? 'bg-raised hairline' : 'bg-well hairline'} flex items-center justify-between gap-2">
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="w-1.5 h-1.5 rounded-full ${active ? 'bg-pos' : 'bg-ink-muted/40'} shrink-0"></span>
+                                <span class="text-[13px] font-medium text-ink-primary truncate">${escapeHtml(p.name)}</span>
+                            </div>
+                            <div class="text-[11px] font-mono text-ink-muted truncate mt-0.5 tabular">${escapeHtml(p.username)}@${escapeHtml(p.host)}:${escapeHtml(p.port)}</div>
+                        </div>
+                        <div class="flex items-center gap-1.5 shrink-0">
+                            ${active
+                                ? `<span class="text-[11px] text-pos font-medium px-1.5">Active</span>`
+                                : `<button onclick="switchServerProfile(${p.id})" class="h-7 px-2.5 rounded-md btn-surface text-[11px] font-medium text-ink-primary">Switch</button>`
+                            }
+                            ${profiles.length > 1
+                                ? `<button onclick="deleteServerProfile(${p.id})" aria-label="Delete profile" class="h-7 w-7 rounded-md btn-surface flex items-center justify-center text-ink-muted hover:text-neg">${svgIcon('trash', 'text-current')}</button>`
+                                : ''
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function switchServerProfile(id) {
+            try {
+                const data = await apiCall('switch_connection', { id });
+                renderServerProfiles(data.connections || []);
+                currentDb = '';
+                populateDatabaseSelect(data.databases || []);
+                showToast(`Switched to ${data.connection.name}`);
+            } catch (err) {
+                showToast('Switch failed: ' + err.message, 'error');
+            }
+        }
+
+        async function deleteServerProfile(id) {
+            try {
+                const data = await apiCall('delete_connection', { id });
+                renderServerProfiles(data.connections || []);
+                populateDatabaseSelect(data.databases || []);
+                showToast('Server profile removed');
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        function renderWatcherStatus(w) {
+            const box = document.getElementById('watcherStatusBox');
+            if (!box) return;
+            const isRunning = !!w.running;
+            box.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full ${isRunning ? 'bg-pos' : 'bg-ink-muted/50'}"></span>
+                        <span class="text-[13px] font-medium ${isRunning ? 'text-pos' : 'text-ink-secondary'}">${isRunning ? 'Running' : 'Stopped'}</span>
+                    </div>
+                    ${w.pid ? `<span class="keycap tabular">PID ${escapeHtml(w.pid)}</span>` : ''}
+                </div>
+                <div class="text-[12px] text-ink-muted tabular">
+                    ${w.last_run ? `Last sync: ${escapeHtml(w.last_run)} · ${w.cycles || 0} cycle(s)` : 'Run start-watcher.bat to sync snapshots every 60s while the browser is closed'}
+                </div>
+                <div class="p-2 rounded bg-canvas hairline font-mono text-[11px] text-ink-secondary overflow-x-auto">php watcher.php --interval=60</div>
+            `;
+        }
+
+        async function refreshWatcherStatus() {
+            try {
+                const res = await apiCall('watcher_status');
+                renderWatcherStatus(res.watcher || {});
+            } catch (e) {}
+        }
+
+        function toggleUnchangedCols(batchKey, btn) {
+            const rows = document.querySelectorAll(`.tm-unchanged-${batchKey}`);
+            if (!rows.length) return;
+            const willShow = rows[0].classList.contains('hidden');
+            rows.forEach(r => r.classList.toggle('hidden', !willShow));
+            btn.textContent = willShow ? 'Hide unchanged columns' : `Show all columns (${rows.length} unchanged)`;
+        }
+
+        async function saveRetentionPolicy() {
+            const days = Number(document.getElementById('retentionSelect').value);
+            try {
+                const res = await apiCall('save_retention', { days });
+                currentRetentionDays = Number(res.retention_days);
+                currentVaultSizeKb = Number(res.vault_size_kb ?? currentVaultSizeKb);
+                updateDashboardUI();
+                showToast(currentRetentionDays === 0
+                    ? 'Retention set to keep history forever'
+                    : `Retention set to ${currentRetentionDays} days (${res.purged_events} purged)`);
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        function updateDesktopAlertsButton() {
+            const btn = document.getElementById('desktopAlertsToggle');
+            if (!btn) return;
+            const active = desktopAlertsEnabled && ('Notification' in window) && Notification.permission === 'granted';
+            btn.textContent = active ? 'Enabled' : 'Enable';
+            btn.className = active
+                ? 'h-7 px-3 rounded-md bg-pos text-canvas text-[12px] font-medium focus-ring shrink-0'
+                : 'h-7 px-3 rounded-md btn-surface text-[12px] font-medium text-ink-secondary focus-ring shrink-0';
+        }
+
+        async function toggleDesktopAlerts() {
+            if (!('Notification' in window)) {
+                return showToast('Browser desktop notifications are not supported', 'error');
+            }
+            if (desktopAlertsEnabled && Notification.permission === 'granted') {
+                desktopAlertsEnabled = false;
+                localStorage.setItem('tm_desktop_alerts', '0');
+                updateDesktopAlertsButton();
+                showToast('Desktop alerts disabled');
+                return;
+            }
+            const perm = await Notification.requestPermission();
+            if (perm === 'granted') {
+                desktopAlertsEnabled = true;
+                localStorage.setItem('tm_desktop_alerts', '1');
+                updateDesktopAlertsButton();
+                showToast('Desktop alerts enabled for dropped tables and mass deletes');
+            } else {
+                showToast('Notification permission was denied by browser', 'error');
+            }
+        }
+
+        function checkDestructiveAlerts(timeline) {
+            (timeline || []).forEach(b => {
+                if (knownAlertBatchKeys.has(b.batch_key)) return;
+                knownAlertBatchKeys.add(b.batch_key);
+
+                const isDropOrTrunc = b.event_type === 'DROP_TABLE' || b.event_type === 'TRUNCATE_TABLE';
+                const isMassDelete = b.event_type === 'DELETE' && Number(b.affected_rows) >= 20;
+
+                if (isDropOrTrunc || isMassDelete) {
+                    const msg = isDropOrTrunc
+                        ? `${b.event_type.replace('_', ' ')} detected on ${b.db_name}.${b.table_name}`
+                        : `Mass delete: ${b.affected_rows} rows deleted from ${b.db_name}.${b.table_name}`;
+                    showToast(msg, 'error');
+                    if (desktopAlertsEnabled && ('Notification' in window) && Notification.permission === 'granted') {
+                        new Notification('MySQL TimeMachine Alert', { body: msg });
+                    }
+                }
+            });
+        }
+
         async function saveConnection() {
             try {
                 const data = await apiCall('save_connection', {
+                    name: document.getElementById('connName').value,
                     host: document.getElementById('connHost').value,
                     port: document.getElementById('connPort').value,
                     username: document.getElementById('connUser').value,
                     password: document.getElementById('connPass').value
                 });
+                document.getElementById('connName').value = '';
+                renderServerProfiles(data.connections || []);
+                currentDb = '';
                 populateDatabaseSelect(data.databases);
-                closeSettingsDrawer();
-                showToast('Connected to MySQL server');
+                showToast(`Connected to ${data.connection.name}`);
             } catch (err) {
                 showToast('Connection failed: ' + err.message, 'error');
             }
